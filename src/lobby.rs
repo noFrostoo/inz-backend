@@ -1,0 +1,194 @@
+use std::sync::Arc;
+
+use axum::{
+    Json,
+    extract::{Extension, Path},
+};
+use serde::{Deserialize, Serialize};
+use sqlx::{PgPool};
+use tokio::sync;
+use uuid::Uuid;
+
+use rand::{Rng};
+
+use crate::{entities::{Lobby, User}, error::AppError, State, LobbyState, auth::Auth};
+
+
+pub async fn create_lobby(
+    Extension(ref db): Extension<PgPool>,
+    Json(payload): Json<CreateLobby>,
+    Extension(state): Extension<Arc<State>>,
+    auth: Auth
+) -> Result<Json<Lobby>, AppError> {
+
+    let owner_id = auth.user_id; //TODO; if not given id of current user
+    let mut code_option: Option<String> = None;
+
+    if payload.generate_connect_code {
+        let mut count: Option<i64> = Some(0);
+        let mut code = generate_connect_code();
+
+        while let Some(1) = count {
+            count = sqlx::query_scalar!(
+                // language=PostgreSQL
+                r#"select COUNT(*) from "lobby"  where connect_code = $1"#,
+                code
+            )
+            .fetch_one(db)
+            .await
+            .map_err(|e| {
+                AppError::DbErr(e.to_string())
+            })?;
+
+            code = generate_connect_code();
+        }
+
+        code_option = Some(code);
+    }
+
+    let lobby = sqlx::query_as!(Lobby,
+        // language=PostgreSQL
+        r#"insert into "lobby" (name, password, connect_code, code_use_times, max_players, owner_id, started) values ($1, $2, $3, $4, $5, $6, $7) returning id, name, password, connect_code, code_use_times, max_players, started, owner_id"#,
+        payload.name,
+        payload.password,
+        code_option,
+        payload.code_use_times,
+        payload.max_players,
+        owner_id,
+        false
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| {
+        AppError::NotFound(e.to_string())
+    })?;
+
+    
+    match state.lobbies.write() {
+        Ok(mut ctx) => {
+            match ctx.get(&lobby.id) {
+                Some(_) => {
+                    return Err(AppError::NotFound("Looby already created".to_string()));
+                },
+                None => {
+                    //TODO: fix magic number
+                    let (tx, _rx) = sync::broadcast::channel(33);
+                    ctx.insert(lobby.id, LobbyState { sender: tx});
+                },
+            }
+        },
+        Err(e) => {
+            return Err(AppError::InternalServerError(e.to_string()));
+        },
+    }
+
+    Ok(Json(lobby))
+}
+
+pub async fn get_lobby(
+    Path(id): Path<Uuid>,
+    Extension(ref db): Extension<PgPool>,
+    _auth: Auth
+) -> Result<Json<Lobby>, AppError> {
+    
+    let lobby = sqlx::query_as!(Lobby,
+        // language=PostgreSQL
+        r#"select id, name, password, connect_code, code_use_times, max_players, started, owner_id from "lobby" where id = $1"#,
+        id
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| {
+        AppError::NotFound(e.to_string())
+    })?;
+
+    Ok(Json(lobby))
+}
+
+pub async fn get_lobbies(
+    Extension(ref db): Extension<PgPool>,
+    _auth: Auth
+) -> Result<Json<Vec<Lobby>>, AppError> {
+    
+    let lobbies = sqlx::query_as!(Lobby,
+        // language=PostgreSQL
+        r#"select id, name, password, connect_code, code_use_times, max_players, started, owner_id from "lobby" "#,
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| {
+        AppError::NotFound(e.to_string())
+    })?;
+
+    Ok(Json(lobbies))
+}
+
+pub async fn delete_lobby(
+    Path(id): Path<Uuid>,
+    Extension(ref db): Extension<PgPool>,
+    _auth: Auth
+) -> Result<(), AppError> {
+    
+    sqlx::query!(
+        // language=PostgreSQL
+        r#"delete from "lobby" where id = $1 "#,
+        id
+    )
+    .execute(db)
+    .await
+    .map_err(|e| {
+        AppError::DbErr(e.to_string())
+    })?;
+
+    sqlx::query!(
+        // language=PostgreSQL
+        r#"update "user" set game_id = NULL where game_id = $1"#,
+        id
+    )
+    .execute(db)
+    .await
+    .map_err(|e| {
+        AppError::DbErr(e.to_string())
+    })?;
+    
+    Ok(())
+}
+
+fn generate_connect_code() -> String {
+    let mut rng = rand::thread_rng();
+    let letter: char = rng.gen_range(b'A'..b'Z') as char;
+    let number: u32 = rng.gen_range(0..999999);
+    format!("{}{:06}", letter, number)
+}
+
+// the input to our `create_user` handler
+#[derive(Deserialize)]
+pub struct CreateLobby {
+    pub name: String,
+    pub password: Option<String>,
+    pub generate_connect_code: bool, 
+    pub code_use_times: i16,
+    pub max_players: i16,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateLobby {
+    pub name: String,
+    pub password: Option<String>,
+    pub generate_connect_code: bool, 
+    pub code_use_times: i16,
+    pub max_players: i16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct LobbyUserUpdate{ 
+    pub game_id: Uuid,
+    pub user: User,
+    pub users_count: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct LobbyUserUpdateResponse{ 
+    pub game_id: Uuid,
+    pub users_count: i64,
+}
