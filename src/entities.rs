@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sqlx::types::Uuid;
+use sqlx::{types::{Uuid, Json}};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct User {
@@ -20,4 +20,12 @@ pub struct Lobby {
     pub max_players: i16,
     pub started: bool,
     pub owner_id: Uuid,
+    pub settings: Json<Settings>
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct Settings {
+
+}
+
+

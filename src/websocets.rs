@@ -5,48 +5,34 @@ use serde::{Serialize, Deserialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{lobby::{LobbyUserUpdate, LobbyUserUpdateResponse}, State};
+use crate::{lobby::{LobbyUserUpdate, LobbyUserUpdateResponse}, State, auth::Auth, entities::User, error::AppError};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventMessages {
-    LobbyUserUpdate,
-    LobbyUserUpdateResponse
+    NewUserConnected,
+    SettingChanged,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerMessage {
     LobbyUserUpdate(LobbyUserUpdate),
+    Error(AppError)
 }
 
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMessage {
     Auth{user_id: Uuid, lobby_id: Uuid},
-    LobbyUserUpdateResponse(LobbyUserUpdateResponse)
+    LobbyUserUpdateResponse(LobbyUserUpdateResponse),
+    Error(String)//TODO: 
 }
 
 
 
-pub async fn process_message(mut socket: WebSocket<ServerMessage, ClientMessage>, mut state: Arc<State>, ref db: PgPool) {
-    let user: Uuid;
-    let lobby: Uuid;
+pub async fn process_message(mut socket: WebSocket<ServerMessage, ClientMessage>, mut state: Arc<State>, ref db: PgPool, user: User) {
     
-    if let Some(msg) = socket.recv().await {
-        //TODO max retries
-        match msg {
-            Ok(axum_typed_websockets::Message::Item(ClientMessage::Auth { user_id, lobby_id })) => {
-                //TODO: auth user
-                user = user_id;
-                lobby = lobby_id;
-            }
-            Ok(_) => {return ;},
-            Err(_) => todo!(),
-        }
-    } else {
-        //TODO; send error
-        return 
-    }
     
+
     let tx;
     let rx;
 

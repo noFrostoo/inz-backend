@@ -4,10 +4,8 @@ use axum::{
     Json,
     extract::{Extension, Path, Query},
 };
-use axum_typed_websockets::WebSocket;
 use serde::{Deserialize};
 use sqlx::{PgPool};
-use tokio::sync;
 use tracing::{event, Level};
 use uuid::Uuid;
 use argon2::{
@@ -18,7 +16,7 @@ use argon2::{
     Argon2
 };
 
-use crate::{entities::User, error::AppError, State, auth::Auth, lobby};
+use crate::{entities::User, error::AppError, State, auth::Auth, websocets::EventMessages};
 
 
 pub async fn create_user(
@@ -47,13 +45,9 @@ pub async fn create_user(
     Ok(Json(user))
 }
 
-pub async fn get_user(
-    Path(id): Path<Uuid>,
-    Extension(ref db): Extension<PgPool>,
-    _auth: Auth
-) -> Result<Json<User>, AppError> {
-    
-    let user = sqlx::query_as!(User,
+
+pub async fn get_user(id: Uuid, db: &PgPool) -> Result<User, AppError> {
+    Ok(sqlx::query_as!(User,
         // language=PostgreSQL
         r#"select id, username, password, game_id, temp from "user" where id = $1"#,
         id
@@ -62,7 +56,16 @@ pub async fn get_user(
     .await
     .map_err(|e| {
         AppError::NotFound(e.to_string())
-    })?;
+    })?)
+}
+
+pub async fn get_user_endpoint(
+    Path(id): Path<Uuid>,
+    Extension(ref db): Extension<PgPool>,
+    _auth: Auth
+) -> Result<Json<User>, AppError> {
+    
+    let user = get_user(id, db).await?;
 
     Ok(Json(user))
 }
@@ -72,16 +75,7 @@ pub async fn get_me(
     auth: Auth
 ) -> Result<Json<User>, AppError> {
 
-    let user = sqlx::query_as!(User,
-        // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" where id = $1"#,
-        auth.user_id
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| {
-        AppError::NotFound(e.to_string())
-    })?;
+    let user = get_user(auth.user_id, db).await?;
 
     Ok(Json(user))
 }
@@ -91,7 +85,7 @@ pub async fn get_users(
     _auth: Auth
 ) -> Result<Json<Vec<User>>, AppError> {
     
-    let user = sqlx::query_as!(User,
+    let users = sqlx::query_as!(User,
         // language=PostgreSQL
         r#"select id, username, password, game_id, temp from "user" "#,
     )
@@ -101,7 +95,7 @@ pub async fn get_users(
         AppError::DbErr(e.to_string())
     })?;
 
-    Ok(Json(user))
+    Ok(Json(users))
 }
 
 pub async fn delete_user(
@@ -233,10 +227,10 @@ pub async fn connect_user(
     })?;
 
     match state.lobbies.read() {
-        Ok(mut ctx) => {
+        Ok(ctx) => {
             match ctx.get(&params.game_id) {
                 Some(lobby_state) => {
-                    lobby_state.sender.send(value)
+                    lobby_state.sender.send(EventMessages::NewUserConnected).map_err(|e| {AppError::InternalServerError(e.to_string())})?;
                 },
                 None => {
                     return Err(AppError::InternalServerError("Looby not found".to_string()));
@@ -271,8 +265,13 @@ pub async fn disconnect_user(
 }
 
 pub async fn quick_connect(
-
+    Extension(ref db): Extension<PgPool>,
+    params: Query<QuickConnect>,
 ) -> Result<Json<Uuid>, AppError> {
+    /*
+    1. 
+    
+    */
     Ok(Json(Uuid::new_v4()))
 }
 

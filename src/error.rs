@@ -1,6 +1,8 @@
 use axum::{response::{IntoResponse, Response}, http::StatusCode, Json};
+use serde::{Serialize, Deserialize};
 use serde_json::json;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AppError {
     UnprocessableEntity(String),
     NotFound(String),
