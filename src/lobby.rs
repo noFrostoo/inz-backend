@@ -37,13 +37,8 @@ pub struct UpdateLobby {
 pub struct LobbyUserUpdate{ 
     pub game_id: Uuid,
     pub user: User,
-    pub users_count: i64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub struct LobbyUserUpdateResponse{ 
-    pub game_id: Uuid,
-    pub users_count: i64,
+    pub users_count: usize,
+    pub users: Vec<User>
 }
 
 //TODO: better name
@@ -137,6 +132,7 @@ pub async fn get_lobby(
     Ok(Json(response))
 }
 
+//TODO: refactor name
 async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppError> {
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL

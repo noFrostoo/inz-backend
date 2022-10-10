@@ -1,1 +1,6 @@
 /target
+/.vscode
+.vscode/*
+.vscode/**
+.vscode
+.vscode/launch.json

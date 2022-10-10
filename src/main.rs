@@ -12,7 +12,6 @@ use axum::{
     extract::{Extension}, response::IntoResponse,
 };
 use tokio::sync;
-use user::get_user;
 use uuid::Uuid;
 use std::{net::SocketAddr, env, collections::{HashMap}, sync::{Arc, RwLock}};
 use once_cell::sync::Lazy;
@@ -23,7 +22,7 @@ use websocets::{EventMessages, ClientMessage, process_message, ServerMessage};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{user::{create_user, get_users, delete_user, update_user, connect_user, disconnect_user, get_me, get_user_endpoint}, auth::{Keys, authorize}};
+use crate::{user::{create_user, get_users, delete_user, update_user, disconnect_user, get_me, get_user_endpoint, connect_user_endpoint}, auth::{Keys, authorize}};
 use crate::lobby::{create_lobby, get_lobbies, get_lobby, delete_lobby};
 
 pub struct LobbyState {
@@ -65,7 +64,7 @@ async fn main(){
         .route("/", get(root))
         .route("/users", post(create_user).get(get_users))
         .route("/users/:id", get(get_user_endpoint).delete(delete_user).put(update_user))
-        .route("/users/:id/connect", put(connect_user))
+        .route("/users/:id/connect", put(connect_user_endpoint))
         .route("/users/:id/disconnect", put(disconnect_user))
         .route("/users/me", get(get_me))
         .route("/lobby", post(create_lobby).get(get_lobbies))
@@ -98,12 +97,6 @@ async fn websocket_handler(
     Extension(ref db): Extension<PgPool>,
     auth: Auth
 ) -> impl IntoResponse {
-
-    let user = match get_user(auth.user_id, db).await {
-        Ok(u) => u,
-        Err(_) => todo!() ,
-    };
-
     let db_clone = db.clone();
-    ws.on_upgrade(|socket| process_message(socket, state, db_clone, user))
+    ws.on_upgrade(|socket| process_message(socket, state, db_clone, auth))
 }

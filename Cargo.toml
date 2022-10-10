@@ -9,7 +9,7 @@ edition = "2021"
 headers = "0.3"
 jsonwebtoken = "8.0"
 once_cell = "1.8"
-axum = { version = "0.5.15", features = ["headers"] }
+axum = { version = "0.5.15", features = ["headers", "ws"] }
 serde = { version = "1.0.143", features = ["derive"] }
 serde_json = "1.0.81"
 tokio = { version = "1", features = ["full"] }
@@ -23,6 +23,7 @@ dotenv = "0.15.0"
 rand = "0.8.5"
 rand_core = { version = "0.6", features = ["std"] }
 axum-typed-websockets = "0.4.0"
+futures = "0.3"
 
 [dependencies.uuid]
 version = "1.1.2"
