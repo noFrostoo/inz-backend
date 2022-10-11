@@ -44,19 +44,44 @@ pub struct QuickConnect {
 }
 
 
-pub async fn create_user(
+pub async fn create_user_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateUser>,
 ) -> Result<Json<User>, AppError> {
     
+    let user = create_user(db, payload).await?;
+
+    Ok(Json(user))
+}
+
+pub async fn create_user(
+    db: &PgPool,
+    user_data: CreateUser,
+) -> Result<User, AppError> {
     let argon2 = Argon2::default();
     let salt = SaltString::generate(&mut OsRng);
+
+    let count = sqlx::query_scalar!(
+        // language=PostgreSQL
+        r#"select count(*) from "user" where username = $1"#,
+        user_data.username
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| {
+        AppError::InternalServerError(e.to_string())
+    })?;
+
+    if count.is_none() || ( count.is_some() && count.unwrap() != 1)  {
+        return Err(AppError::AlreadyExists("User exists with this username".to_string()));
+    }
+
 
     let user = sqlx::query_as!(User,
         // language=PostgreSQL
         r#"insert into "user" (username,password,temp) values ($1, $2, $3) returning id, username, password, game_id, temp"#,
-        payload.username,
-        argon2.hash_password(payload.password.as_bytes(), &salt).map_err(|e| {
+        user_data.username,
+        argon2.hash_password(user_data.password.as_bytes(), &salt).map_err(|e| {
             AppError::InternalServerError(e.to_string()) //TODO: refactor error
         })?.to_string(),
         false
@@ -67,7 +92,7 @@ pub async fn create_user(
         AppError::NotCreated(e.to_string())
     })?;
 
-    Ok(Json(user))
+    Ok(user)
 }
 
 
@@ -239,7 +264,7 @@ pub async fn connect_user(
     .fetch_one(db)
     .await
     .map_err(|e| {
-        AppError::NotFound(e.to_string())
+        AppError::InternalServerError(e.to_string())
     })?;
 
     if max_players == 0 {
@@ -320,7 +345,7 @@ pub async fn quick_connect_endpoint(
 ) -> Result<Json<Uuid>, AppError> {
     let user = get_user(auth.user_id, db).await?;
 
-    let lobby_id = quick_connect(db, params.connect_code.clone(), state, user).await?;
+    let lobby_id = quick_connect(db, &params.connect_code, state, user).await?;
 
     Ok(Json(lobby_id))
 }
@@ -328,15 +353,58 @@ pub async fn quick_connect_endpoint(
 pub async fn quick_connect_endpoint_no_user(
     Extension(ref db): Extension<PgPool>,
     params: Query<QuickConnect>,
+    Extension(state): Extension<Arc<State>>
 ) -> Result<Json<Uuid>, AppError> {
+    let count = sqlx::query_scalar!(
+        // language=PostgreSQL
+        r#"select count(*) from "lobby" where connect_code = $1"#,
+        params.connect_code
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| {
+        AppError::InternalServerError(e.to_string())
+    })?;
+
+    match count {
+        Some(c) => {
+            if c != 1 {
+                return Err(AppError::NotFound("No lobby with this connect code".to_string()));
+            }
+        },
+        None => {
+            //TODO: WTF XD idk to do 
+            tracing::info!("NONE WHILE looking for count of lobbies with this connect code")
+        },
+    }
+
+    let mut user = CreateUser{
+        username: generate_username(),
+        password: generate_password(),
+    };
+    let creation_result = create_user(db, user).await;
 
 
-    Ok(Json(Uuid::new_v4()))
+    while let Err(AppError::AlreadyExists(_)) = creation_result {
+        user = CreateUser{
+            username: generate_username(),
+            password: generate_password(),
+        };
+    }
+
+    match creation_result {
+        Ok(u) => {
+            let lobby_id = quick_connect(db, &params.connect_code, state, u).await?;
+            Ok(Json(lobby_id))
+        },
+        Err(e) => todo!(),
+    }
+
 }
 
 pub async fn quick_connect(
     db: &PgPool,
-    connect_code: String,
+    connect_code: &String,
     state: Arc<State>,
     user: User
 ) -> Result<Uuid, AppError> {
@@ -358,6 +426,17 @@ pub async fn quick_connect(
 
 fn generate_username() -> String {
     let mut rng = rand::thread_rng();
-    let number: u32 = rng.gen_range(0..99999999);
-    format!("temp-{:010}", number)
+    let number: u64 = rng.gen_range(0..9999999999999);
+    format!("temp-{:013}", number)
+}
+
+fn generate_password() -> String {
+    let mut rng = rand::thread_rng();
+    let mut s = Vec::new();
+    for _ in 1..10 {
+        let letter: char = rng.gen_range(b'A'..b'Z') as char;
+        s.push(letter);
+    }
+    let number: u64 = rng.gen_range(0..9999999999999);
+    format!("{}{:013}", String::from_iter(s), number)
 }

@@ -22,7 +22,7 @@ use websocets::{EventMessages, ClientMessage, process_message, ServerMessage};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{user::{create_user, get_users, delete_user, update_user, disconnect_user, get_me, get_user_endpoint, connect_user_endpoint}, auth::{Keys, authorize}};
+use crate::{user::{create_user, get_users, delete_user, update_user, disconnect_user, get_me, get_user_endpoint, connect_user_endpoint, create_user_endpoint, quick_connect_endpoint, quick_connect_endpoint_no_user}, auth::{Keys, authorize}};
 use crate::lobby::{create_lobby, get_lobbies, get_lobby, delete_lobby};
 
 pub struct LobbyState {
@@ -62,11 +62,13 @@ async fn main(){
 
     let app = Router::new()
         .route("/", get(root))
-        .route("/users", post(create_user).get(get_users))
+        .route("/users", post(create_user_endpoint).get(get_users))
         .route("/users/:id", get(get_user_endpoint).delete(delete_user).put(update_user))
         .route("/users/:id/connect", put(connect_user_endpoint))
         .route("/users/:id/disconnect", put(disconnect_user))
         .route("/users/me", get(get_me))
+        .route("/users/me/quick_connect", put(quick_connect_endpoint))
+        .route("/users/quick_connect", put(quick_connect_endpoint_no_user))
         .route("/lobby", post(create_lobby).get(get_lobbies))
         .route("/lobby/:id", get(get_lobby).delete(delete_lobby))
         .route("/lobby/websocket", get(websocket_handler))

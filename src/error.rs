@@ -17,6 +17,7 @@ pub enum AppError {
     MissingCredentials,
     TokenCreation,
     InvalidToken,
+    AlreadyExists(String)
 }
 
 impl AppError {
@@ -32,7 +33,8 @@ impl AppError {
             AppError::WrongCredentials => (StatusCode::UNAUTHORIZED, "Wronge credentials".to_string()),
             AppError::MissingCredentials => (StatusCode::UNAUTHORIZED, "missing credentials".to_string()),
             AppError::TokenCreation => (StatusCode::INTERNAL_SERVER_ERROR, "bad token".to_string()),
-            AppError::InvalidToken => (StatusCode::UNAUTHORIZED, "invalid credentials".to_string()), 
+            AppError::InvalidToken => (StatusCode::UNAUTHORIZED, "invalid credentials".to_string()),
+            AppError::AlreadyExists(_) => todo!(), 
         }
     }
 }
