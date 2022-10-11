@@ -23,9 +23,19 @@ pub struct Lobby {
     pub settings: Json<Settings>
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Settings {
 
+}
+
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct Template {
+    pub id: Uuid,
+    pub name: String,
+    pub max_players: i16,
+    pub owner_id: Uuid,
+    pub settings: Json<Settings>
 }
 
 

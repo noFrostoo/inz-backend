@@ -17,7 +17,7 @@ pub enum AppError {
     MissingCredentials,
     TokenCreation,
     InvalidToken,
-    AlreadyExists(String)
+    AlreadyExists(String),
 }
 
 impl AppError {

@@ -22,6 +22,7 @@ pub struct CreateLobby {
     pub generate_connect_code: bool, 
     pub code_use_times: i16,
     pub max_players: i16,
+    pub settings: Option<Settings>
 }
 
 #[derive(Deserialize)]
@@ -81,6 +82,11 @@ pub async fn create_lobby(
         code_option = Some(code);
     }
 
+    let settings = match payload.settings {
+        Some(s) => s,
+        None => Settings::default(),
+    };
+
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
         r#"insert into "lobby" (name, password, connect_code, code_use_times, max_players, owner_id, started, settings) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id, name, password, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>""#,
@@ -91,7 +97,7 @@ pub async fn create_lobby(
         payload.max_players,
         owner_id,
         false,
-        sqlx::types::Json(Settings{}) as _
+        sqlx::types::Json(settings) as _
     )
     .fetch_one(db)
     .await

@@ -382,14 +382,16 @@ pub async fn quick_connect_endpoint_no_user(
         username: generate_username(),
         password: generate_password(),
     };
-    let creation_result = create_user(db, user).await;
 
+    let mut creation_result = create_user(db, user).await;
 
     while let Err(AppError::AlreadyExists(_)) = creation_result {
         user = CreateUser{
             username: generate_username(),
             password: generate_password(),
         };
+
+        creation_result = create_user(db, user).await;
     }
 
     match creation_result {
@@ -397,7 +399,7 @@ pub async fn quick_connect_endpoint_no_user(
             let lobby_id = quick_connect(db, &params.connect_code, state, u).await?;
             Ok(Json(lobby_id))
         },
-        Err(e) => todo!(),
+        Err(e) => Err(e),
     }
 
 }
@@ -418,6 +420,11 @@ pub async fn quick_connect(
     .map_err(|e| {
         AppError::NotFound(e.to_string())
     })?;
+
+    //TODO: not safe asynchronously 
+    if lobby.code_use_times.is_some() && lobby.code_use_times.unwrap() <= 0 { 
+        return Err(AppError::LobbyFull("Can't connect to lobby with this code".to_string()));
+    }
 
     let game_id = connect_user(user.id, db, state, lobby.id).await?;
 
