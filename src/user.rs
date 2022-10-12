@@ -17,13 +17,14 @@ use argon2::{
     Argon2
 };
 
-use crate::{entities::{User, Settings, Lobby}, error::AppError, State, auth::Auth, websocets::EventMessages};
+use crate::{entities::{User, Settings, Lobby, UserRole}, error::AppError, State, auth::{Auth, AuthAdmin}, websocets::EventMessages};
 
 // the input to our `create_user` handler
 #[derive(Deserialize)]
 pub struct CreateUser {
     username: String,
     password: String,
+    role: UserRole
 }
 
 
@@ -79,12 +80,12 @@ pub async fn create_user(
 
     let user = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"insert into "user" (username,password,temp) values ($1, $2, $3) returning id, username, password, game_id, temp"#,
+        r#"insert into "user" (username,password,role) values ($1, $2, $3) returning id, username, password, game_id, role as "role: UserRole" "#,
         user_data.username,
         argon2.hash_password(user_data.password.as_bytes(), &salt).map_err(|e| {
             AppError::InternalServerError(e.to_string()) //TODO: refactor error
         })?.to_string(),
-        false
+        user_data.role as _
     )
     .fetch_one(db)
     .await
@@ -99,7 +100,7 @@ pub async fn create_user(
 pub async fn get_user(id: Uuid, db: &PgPool) -> Result<User, AppError> {
     Ok(sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" where id = $1"#,
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where id = $1"#,
         id
     )
     .fetch_one(db)
@@ -137,7 +138,7 @@ pub async fn get_users(
     
     let users = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" "#,
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" "#,
     )
     .fetch_all(db)
     .await
@@ -177,7 +178,7 @@ pub async fn update_user(
     
     let old = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" where id = $1 "#,
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where id = $1 "#,
         id
     )
     .fetch_one(db)
@@ -198,7 +199,7 @@ pub async fn update_user(
 
     let updated = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"update "user" set username = $1, password = $2 where id = $3 returning id, username, password, game_id, temp"#,
+        r#"update "user" set username = $1, password = $2 where id = $3 returning id, username, password, game_id, role as "role: UserRole" "#,
         username,
         password,
         id
@@ -232,7 +233,7 @@ pub async fn connect_user(
 )-> Result<Uuid, AppError> {
     let user = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" where id = $1 "#,
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where id = $1 "#,
         id
     )
     .fetch_one(db)
@@ -289,7 +290,7 @@ pub async fn connect_user(
 
     let users = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" where game_id = $1 "#,
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where game_id = $1 "#,
         game_id
     )
     .fetch_all(db)
@@ -381,6 +382,7 @@ pub async fn quick_connect_endpoint_no_user(
     let mut user = CreateUser{
         username: generate_username(),
         password: generate_password(),
+        role: UserRole::Temp,
     };
 
     let mut creation_result = create_user(db, user).await;
@@ -389,6 +391,7 @@ pub async fn quick_connect_endpoint_no_user(
         user = CreateUser{
             username: generate_username(),
             password: generate_password(),
+            role: UserRole::Temp
         };
 
         creation_result = create_user(db, user).await;

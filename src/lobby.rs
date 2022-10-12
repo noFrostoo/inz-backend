@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use rand::{Rng};
 
-use crate::{entities::{Lobby, User, Settings}, error::AppError, State, LobbyState, auth::Auth};
+use crate::{entities::{Lobby, User, Settings, UserRole}, error::AppError, State, LobbyState, auth::Auth};
 
 
 // the input to our `create_user` handler
@@ -153,7 +153,7 @@ async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppE
 
     let players = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" "#,
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" "#,
     )
     .fetch_all(db)
     .await
@@ -163,7 +163,7 @@ async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppE
 
     let owner = sqlx::query_as!(User,
         // language=PostgreSQL
-        r#"select id, username, password, game_id, temp from "user" where id = $1 "#,
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where id = $1 "#,
         lobby.owner_id
     )
     .fetch_one(db)

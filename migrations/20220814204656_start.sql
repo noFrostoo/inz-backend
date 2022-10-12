@@ -5,5 +5,5 @@ create table "user"
     username      text unique not null,
     password      text        not null,
     game_id       uuid,
-    temp          boolean     not null
+    role          text not null
 );
