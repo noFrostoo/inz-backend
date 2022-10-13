@@ -1,33 +1,48 @@
+mod auth;
 mod entities;
 mod error;
-mod user;
 mod lobby;
+mod template;
+mod user;
 mod websocets;
-mod auth;
 
 use auth::Auth;
 use axum::{
+    extract::Extension,
+    response::IntoResponse,
     routing::{get, post, put},
     Router,
-    extract::{Extension}, response::IntoResponse,
+};
+use axum_typed_websockets::WebSocketUpgrade;
+use once_cell::sync::Lazy;
+use sqlx::{postgres::PgPoolOptions, PgPool};
+use std::{
+    collections::HashMap,
+    env,
+    net::SocketAddr,
+    sync::{Arc, RwLock},
 };
 use tokio::sync;
-use uuid::Uuid;
-use std::{net::SocketAddr, env, collections::{HashMap}, sync::{Arc, RwLock}};
-use once_cell::sync::Lazy;
 use tower::ServiceBuilder;
-use sqlx::{postgres::PgPoolOptions, PgPool};
-use axum_typed_websockets::{WebSocketUpgrade};
-use websocets::{EventMessages, ClientMessage, process_message, ServerMessage};
+use uuid::Uuid;
+use websocets::{process_message, ClientMessage, EventMessages, ServerMessage};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{user::{create_user, get_users, delete_user, update_user, disconnect_user, get_me, get_user_endpoint, connect_user_endpoint, create_user_endpoint, quick_connect_endpoint, quick_connect_endpoint_no_user}, auth::{Keys, authorize}};
-use crate::lobby::{create_lobby, get_lobbies, get_lobby, delete_lobby};
+use crate::lobby::{create_lobby_endpoint, delete_lobby_endpoint, get_lobbies_endpoint};
+use crate::{
+    auth::{authorize_endpoint, Keys},
+    lobby::get_lobby_endpoint,
+    user::{
+        connect_user_endpoint, create_user_endpoint, delete_user_endpoint,
+        disconnect_user_endpoint, get_me_endpoint, get_user_endpoint, get_users_endpoint,
+        quick_connect_endpoint, quick_connect_endpoint_no_user, register_endpoint,
+        update_user_endpoint,
+    },
+};
 
 pub struct LobbyState {
-
-    sender: sync::broadcast::Sender<EventMessages>
+    sender: sync::broadcast::Sender<EventMessages>,
 }
 
 pub struct State {
@@ -40,44 +55,57 @@ static KEYS: Lazy<Keys> = Lazy::new(|| {
 });
 
 #[tokio::main]
-async fn main(){
+async fn main() {
     dotenv::dotenv().ok();
 
     tracing_subscriber::registry()
-    .with(tracing_subscriber::EnvFilter::new(
-        std::env::var("RUST_LOG").unwrap_or_else(|_| "inz=trace".into()),
-    ))
-    .with(tracing_subscriber::fmt::layer())
-    .init();
+        .with(tracing_subscriber::EnvFilter::new(
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "inz=trace".into()),
+        ))
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 
     let db = PgPoolOptions::new()
-    .max_connections(50)
-    .connect(env::var("DATABASE_URL").unwrap().as_str())
-    .await
-    .expect("could not connect to db");
+        .max_connections(50)
+        .connect(env::var("DATABASE_URL").unwrap().as_str())
+        .await
+        .expect("could not connect to db");
 
     sqlx::migrate!().run(&db).await.unwrap();
 
-    let state = Arc::new(State{ lobbies: RwLock::new(HashMap::new()) });
+    let state = Arc::new(State {
+        lobbies: RwLock::new(HashMap::new()),
+    });
 
     let app = Router::new()
         .route("/", get(root))
-        .route("/users", post(create_user_endpoint).get(get_users))
-        .route("/users/:id", get(get_user_endpoint).delete(delete_user).put(update_user))
+        .route("/users", post(create_user_endpoint).get(get_users_endpoint))
+        .route(
+            "/users/:id",
+            get(get_user_endpoint)
+                .delete(delete_user_endpoint)
+                .put(update_user_endpoint),
+        )
         .route("/users/:id/connect", put(connect_user_endpoint))
-        .route("/users/:id/disconnect", put(disconnect_user))
-        .route("/users/me", get(get_me))
+        .route("/users/:id/disconnect", put(disconnect_user_endpoint))
+        .route("/users/me", get(get_me_endpoint))
         .route("/users/me/quick_connect", put(quick_connect_endpoint))
         .route("/users/quick_connect", put(quick_connect_endpoint_no_user))
-        .route("/lobby", post(create_lobby).get(get_lobbies))
-        .route("/lobby/:id", get(get_lobby).delete(delete_lobby))
+        .route(
+            "/lobby",
+            post(create_lobby_endpoint).get(get_lobbies_endpoint),
+        )
+        .route(
+            "/lobby/:id",
+            get(get_lobby_endpoint).delete(delete_lobby_endpoint),
+        )
         .route("/lobby/websocket", get(websocket_handler))
-        .route("/authorize", post(authorize))
+        .route("/authorize", post(authorize_endpoint))
+        .route("/register", post(register_endpoint))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(db))
-                .layer(Extension(state))
-                //can add cookie managment here
+                .layer(Extension(state)), //can add cookie managment here
         );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -97,7 +125,7 @@ async fn websocket_handler(
     ws: WebSocketUpgrade<ServerMessage, ClientMessage>,
     Extension(state): Extension<Arc<State>>,
     Extension(ref db): Extension<PgPool>,
-    auth: Auth
+    auth: Auth,
 ) -> impl IntoResponse {
     let db_clone = db.clone();
     ws.on_upgrade(|socket| process_message(socket, state, db_clone, auth))

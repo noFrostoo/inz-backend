@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{types::{Uuid, Json}};
+use sqlx::types::{Json, Uuid};
 
 #[derive(sqlx::Type, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[sqlx(type_name = "color")] // only for PostgreSQL to match a type definition
+#[sqlx(type_name = "user_role")] // only for PostgreSQL to match a type definition
 #[sqlx(rename_all = "lowercase")]
 pub enum UserRole {
     User,
@@ -30,14 +30,11 @@ pub struct Lobby {
     pub max_players: i16,
     pub started: bool,
     pub owner_id: Uuid,
-    pub settings: Json<Settings>
+    pub settings: Json<Settings>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Settings {
-
-}
-
+pub struct Settings {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Template {
@@ -45,7 +42,5 @@ pub struct Template {
     pub name: String,
     pub max_players: i16,
     pub owner_id: Uuid,
-    pub settings: Json<Settings>
+    pub settings: Json<Settings>,
 }
-
-

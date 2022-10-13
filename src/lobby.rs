@@ -1,62 +1,65 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
     extract::{Extension, Path},
+    Json,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool};
+use sqlx::PgPool;
 use tokio::sync;
 use uuid::Uuid;
 
-use rand::{Rng};
+use rand::Rng;
 
-use crate::{entities::{Lobby, User, Settings, UserRole}, error::AppError, State, LobbyState, auth::Auth};
-
+use crate::{
+    auth::{Auth, AuthGameAdmin},
+    entities::{Lobby, Settings, User, UserRole},
+    error::AppError,
+    LobbyState, State,
+};
 
 // the input to our `create_user` handler
 #[derive(Deserialize)]
 pub struct CreateLobby {
     pub name: String,
     pub password: Option<String>,
-    pub generate_connect_code: bool, 
+    pub generate_connect_code: bool,
     pub code_use_times: i16,
     pub max_players: i16,
-    pub settings: Option<Settings>
+    pub settings: Option<Settings>,
 }
 
 #[derive(Deserialize)]
 pub struct UpdateLobby {
     pub name: String,
     pub password: Option<String>,
-    pub generate_connect_code: bool, 
+    pub generate_connect_code: bool,
     pub code_use_times: i16,
     pub max_players: i16,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub struct LobbyUserUpdate{ 
+pub struct LobbyUserUpdate {
     pub game_id: Uuid,
     pub user: User,
     pub users_count: usize,
-    pub users: Vec<User>
+    pub users: Vec<User>,
 }
 
 //TODO: better name
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-pub struct LobbyResponse{ 
+pub struct LobbyResponse {
     pub lobby: Lobby,
     pub players: Vec<User>,
-    pub owner: User
+    pub owner: User,
 }
 
-pub async fn create_lobby(
+pub async fn create_lobby_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateLobby>,
     Extension(state): Extension<Arc<State>>,
-    auth: Auth
+    auth: AuthGameAdmin,
 ) -> Result<Json<Lobby>, AppError> {
-
     let owner_id = auth.user_id; //TODO; if not given id of current user
     let mut code_option: Option<String> = None;
 
@@ -72,9 +75,7 @@ pub async fn create_lobby(
             )
             .fetch_one(db)
             .await
-            .map_err(|e| {
-                AppError::DbErr(e.to_string())
-            })?;
+            .map_err(|e| AppError::DbErr(e.to_string()))?;
 
             code = generate_connect_code();
         }
@@ -102,44 +103,41 @@ pub async fn create_lobby(
     .fetch_one(db)
     .await
     .map_err(|e| {
-        AppError::NotFound(e.to_string())
+        AppError::DbErr(e.to_string())
     })?;
 
-    
     match state.lobbies.write() {
         Ok(mut ctx) => {
             match ctx.get(&lobby.id) {
                 Some(_) => {
                     return Err(AppError::NotFound("Looby already created".to_string()));
-                },
+                }
                 None => {
                     //TODO: fix magic number
                     let (tx, _rx) = sync::broadcast::channel(33);
-                    ctx.insert(lobby.id, LobbyState { sender: tx});
-                },
+                    ctx.insert(lobby.id, LobbyState { sender: tx });
+                }
             }
-        },
+        }
         Err(e) => {
             return Err(AppError::InternalServerError(e.to_string()));
-        },
+        }
     }
 
     Ok(Json(lobby))
 }
 
-pub async fn get_lobby(
+pub async fn get_lobby_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
-    _auth: Auth
+    _auth: Auth,
 ) -> Result<Json<LobbyResponse>, AppError> {
-
     let response = get_lobby_response(id, db).await?;
 
     Ok(Json(response))
 }
 
-//TODO: refactor name
-async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppError> {
+pub async fn get_lobby(id: Uuid, db: &PgPool) -> Result<Lobby, AppError> {
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
         r#"select id, name, password, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "lobby" where id = $1"#,
@@ -151,15 +149,21 @@ async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppE
         AppError::NotFound(e.to_string())
     })?;
 
-    let players = sqlx::query_as!(User,
+    return Ok(lobby);
+}
+
+//TODO: refactor name
+async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppError> {
+    let lobby = get_lobby(id, db).await?;
+
+    let players = sqlx::query_as!(
+        User,
         // language=PostgreSQL
         r#"select id, username, password, game_id, role as "role: UserRole" from "user" "#,
     )
     .fetch_all(db)
     .await
-    .map_err(|e| {
-        AppError::DbErr(e.to_string())
-    })?;
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     let owner = sqlx::query_as!(User,
         // language=PostgreSQL
@@ -179,11 +183,10 @@ async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppE
     })
 }
 
-pub async fn get_lobbies(
+pub async fn get_lobbies_endpoint(
     Extension(ref db): Extension<PgPool>,
-    _auth: Auth
+    _auth: Auth,
 ) -> Result<Json<Vec<Lobby>>, AppError> {
-    
     let lobbies = sqlx::query_as!(Lobby,
         // language=PostgreSQL
         r#"select id, name, password, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "lobby" "#,
@@ -197,12 +200,19 @@ pub async fn get_lobbies(
     Ok(Json(lobbies))
 }
 
-pub async fn delete_lobby(
+pub async fn delete_lobby_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
-    _auth: Auth
+    auth: Auth,
 ) -> Result<(), AppError> {
-    
+    let lobby = get_lobby(id, db).await?;
+
+    if lobby.owner_id != auth.user_id || auth.role != UserRole::Admin {
+        return Err(AppError::Unauthorized(
+            "Can't delete this lobby with this role".to_string(),
+        ));
+    }
+
     sqlx::query!(
         // language=PostgreSQL
         r#"delete from "lobby" where id = $1 "#,
@@ -210,9 +220,7 @@ pub async fn delete_lobby(
     )
     .execute(db)
     .await
-    .map_err(|e| {
-        AppError::DbErr(e.to_string())
-    })?;
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     sqlx::query!(
         // language=PostgreSQL
@@ -221,10 +229,8 @@ pub async fn delete_lobby(
     )
     .execute(db)
     .await
-    .map_err(|e| {
-        AppError::DbErr(e.to_string())
-    })?;
-    
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+
     Ok(())
 }
 

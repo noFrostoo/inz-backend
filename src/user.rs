@@ -1,32 +1,34 @@
 use std::sync::Arc;
 
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Argon2,
+};
 use axum::{
-    Json,
     extract::{Extension, Path, Query},
+    Json,
 };
 use rand::Rng;
-use serde::{Deserialize};
-use sqlx::{PgPool};
+use serde::Deserialize;
+use sqlx::PgPool;
 use tracing::{event, Level};
 use uuid::Uuid;
-use argon2::{
-    password_hash::{
-        rand_core::OsRng,
-        PasswordHasher, SaltString
-    },
-    Argon2
-};
 
-use crate::{entities::{User, Settings, Lobby, UserRole}, error::AppError, State, auth::{Auth, AuthAdmin}, websocets::EventMessages};
+use crate::{
+    auth::{Auth, AuthAdmin},
+    entities::{Lobby, Settings, User, UserRole},
+    error::AppError,
+    websocets::EventMessages,
+    State,
+};
 
 // the input to our `create_user` handler
 #[derive(Deserialize)]
 pub struct CreateUser {
     username: String,
     password: String,
-    role: UserRole
+    role: UserRole,
 }
-
 
 #[derive(Deserialize)]
 pub struct UpdateUser {
@@ -44,21 +46,32 @@ pub struct QuickConnect {
     connect_code: String,
 }
 
-
 pub async fn create_user_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateUser>,
+    _auth: AuthAdmin,
 ) -> Result<Json<User>, AppError> {
-    
     let user = create_user(db, payload).await?;
 
     Ok(Json(user))
 }
 
-pub async fn create_user(
-    db: &PgPool,
-    user_data: CreateUser,
-) -> Result<User, AppError> {
+pub async fn register_endpoint(
+    Extension(ref db): Extension<PgPool>,
+    Json(payload): Json<CreateUser>,
+) -> Result<Json<User>, AppError> {
+    if payload.role != UserRole::User {
+        return Err(AppError::Unauthorized(
+            "can't create user with this role".to_string(),
+        ));
+    }
+
+    let user = create_user(db, payload).await?;
+
+    Ok(Json(user))
+}
+
+pub async fn create_user(db: &PgPool, user_data: CreateUser) -> Result<User, AppError> {
     let argon2 = Argon2::default();
     let salt = SaltString::generate(&mut OsRng);
 
@@ -69,14 +82,13 @@ pub async fn create_user(
     )
     .fetch_one(db)
     .await
-    .map_err(|e| {
-        AppError::InternalServerError(e.to_string())
-    })?;
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    if count.is_none() || ( count.is_some() && count.unwrap() != 1)  {
-        return Err(AppError::AlreadyExists("User exists with this username".to_string()));
+    if count.is_none() || (count.is_some() && count.unwrap() != 0) {
+        return Err(AppError::AlreadyExists(
+            "User exists with this username".to_string(),
+        ));
     }
-
 
     let user = sqlx::query_as!(User,
         // language=PostgreSQL
@@ -96,7 +108,6 @@ pub async fn create_user(
     Ok(user)
 }
 
-
 pub async fn get_user(id: Uuid, db: &PgPool) -> Result<User, AppError> {
     Ok(sqlx::query_as!(User,
         // language=PostgreSQL
@@ -113,48 +124,47 @@ pub async fn get_user(id: Uuid, db: &PgPool) -> Result<User, AppError> {
 pub async fn get_user_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
-    _auth: Auth
+    _auth: Auth,
 ) -> Result<Json<User>, AppError> {
-    
     let user = get_user(id, db).await?;
 
     Ok(Json(user))
 }
 
-pub async fn get_me(
+pub async fn get_me_endpoint(
     Extension(ref db): Extension<PgPool>,
-    auth: Auth
+    auth: Auth,
 ) -> Result<Json<User>, AppError> {
-
     let user = get_user(auth.user_id, db).await?;
 
     Ok(Json(user))
 }
 
-pub async fn get_users(
+pub async fn get_users_endpoint(
     Extension(ref db): Extension<PgPool>,
-    _auth: Auth
+    _auth: Auth,
 ) -> Result<Json<Vec<User>>, AppError> {
-    
-    let users = sqlx::query_as!(User,
+    let users = sqlx::query_as!(
+        User,
         // language=PostgreSQL
         r#"select id, username, password, game_id, role as "role: UserRole" from "user" "#,
     )
     .fetch_all(db)
     .await
-    .map_err(|e| {
-        AppError::DbErr(e.to_string())
-    })?;
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(Json(users))
 }
 
-pub async fn delete_user(
+pub async fn delete_user_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
-    _auth: Auth
+    auth: Auth,
 ) -> Result<(), AppError> {
-    
+    if auth.user_id != id && auth.role != UserRole::Admin {
+        return Err(AppError::Unauthorized("Can't delete a user".to_string()));
+    }
+
     let res = sqlx::query!(
         // language=PostgreSQL
         r#"delete from "user" where id = $1 "#,
@@ -169,23 +179,17 @@ pub async fn delete_user(
     }
 }
 
-pub async fn update_user(
+pub async fn update_user_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<UpdateUser>,
-    _auth: Auth
+    auth: Auth,
 ) -> Result<Json<User>, AppError> {
-    
-    let old = sqlx::query_as!(User,
-        // language=PostgreSQL
-        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where id = $1 "#,
-        id
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| {
-        AppError::NotFound(e.to_string())
-    })?;
+    if auth.user_id != id && auth.role != UserRole::Admin {
+        return Err(AppError::Unauthorized("Can't update a user".to_string()));
+    }
+
+    let old = get_user(id, db).await?;
 
     let mut username = old.username;
     if let Some(new_username) = payload.username {
@@ -218,32 +222,25 @@ pub async fn connect_user_endpoint(
     Extension(ref db): Extension<PgPool>,
     Extension(state): Extension<Arc<State>>,
     params: Query<ConnectUser>,
-    _auth: Auth
+    _auth: Auth,
 ) -> Result<Json<Uuid>, AppError> {
-   let lobby_id = connect_user(id, db, state, params.game_id).await?;
+    let lobby_id = connect_user(id, db, state, params.game_id).await?;
 
-   Ok(Json(lobby_id))
+    Ok(Json(lobby_id))
 }
 
 pub async fn connect_user(
     id: Uuid,
     db: &PgPool,
     state: Arc<State>,
-    game_id: Uuid
-)-> Result<Uuid, AppError> {
-    let user = sqlx::query_as!(User,
-        // language=PostgreSQL
-        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where id = $1 "#,
-        id
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| {
-        AppError::NotFound(e.to_string())
-    })?;
+    game_id: Uuid,
+) -> Result<Uuid, AppError> {
+    let user = get_user(id, db).await?;
 
     if user.game_id.is_some() {
-        return Err(AppError::AlreadyConnected("Connected to other game".to_string()))
+        return Err(AppError::AlreadyConnected(
+            "Connected to other game".to_string(),
+        ));
     }
 
     let max_players = sqlx::query_scalar!(
@@ -253,9 +250,7 @@ pub async fn connect_user(
     )
     .fetch_one(db)
     .await
-    .map_err(|e| {
-        AppError::NotFound(e.to_string())
-    })?;
+    .map_err(|e| AppError::NotFound(e.to_string()))?;
 
     let count = sqlx::query_scalar!(
         // language=PostgreSQL
@@ -264,9 +259,7 @@ pub async fn connect_user(
     )
     .fetch_one(db)
     .await
-    .map_err(|e| {
-        AppError::InternalServerError(e.to_string())
-    })?;
+    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     if max_players == 0 {
         return Err(AppError::NotFound("No lobby with given id".to_string()));
@@ -284,9 +277,7 @@ pub async fn connect_user(
     )
     .execute(db)
     .await
-    .map_err(|e| {
-        AppError::DbErr(e.to_string())
-    })?;
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     let users = sqlx::query_as!(User,
         // language=PostgreSQL
@@ -300,28 +291,36 @@ pub async fn connect_user(
     })?;
 
     match state.lobbies.read() {
-        Ok(ctx) => {
-            match ctx.get(&game_id) {
-                Some(lobby_state) => {
-                    lobby_state.sender.send(EventMessages::NewUserConnected(crate::lobby::LobbyUserUpdate { game_id: game_id, user: user, users_count: users.len(), users: users })).map_err(|e| {AppError::InternalServerError(e.to_string())})?;
-                },
-                None => {
-                    return Err(AppError::InternalServerError("Looby not found".to_string()));
-                },
+        Ok(ctx) => match ctx.get(&game_id) {
+            Some(lobby_state) => {
+                lobby_state
+                    .sender
+                    .send(EventMessages::NewUserConnected(
+                        crate::lobby::LobbyUserUpdate {
+                            game_id: game_id,
+                            user: user,
+                            users_count: users.len(),
+                            users: users,
+                        },
+                    ))
+                    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+            }
+            None => {
+                return Err(AppError::InternalServerError("Looby not found".to_string()));
             }
         },
         Err(e) => {
             return Err(AppError::InternalServerError(e.to_string()));
-        },
+        }
     }
 
     Ok(game_id)
 }
 
-pub async fn disconnect_user(
+pub async fn disconnect_user_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
-    _auth: Auth
+    _auth: Auth,
 ) -> Result<(), AppError> {
     sqlx::query!(
         // language=PostgreSQL
@@ -330,19 +329,16 @@ pub async fn disconnect_user(
     )
     .execute(db)
     .await
-    .map_err(|e| {
-        AppError::DbErr(e.to_string())
-    })?;
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(())
 }
-
 
 pub async fn quick_connect_endpoint(
     Extension(ref db): Extension<PgPool>,
     params: Query<QuickConnect>,
     Extension(state): Extension<Arc<State>>,
-    auth: Auth
+    auth: Auth,
 ) -> Result<Json<Uuid>, AppError> {
     let user = get_user(auth.user_id, db).await?;
 
@@ -354,7 +350,7 @@ pub async fn quick_connect_endpoint(
 pub async fn quick_connect_endpoint_no_user(
     Extension(ref db): Extension<PgPool>,
     params: Query<QuickConnect>,
-    Extension(state): Extension<Arc<State>>
+    Extension(state): Extension<Arc<State>>,
 ) -> Result<Json<Uuid>, AppError> {
     let count = sqlx::query_scalar!(
         // language=PostgreSQL
@@ -363,23 +359,23 @@ pub async fn quick_connect_endpoint_no_user(
     )
     .fetch_one(db)
     .await
-    .map_err(|e| {
-        AppError::InternalServerError(e.to_string())
-    })?;
+    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     match count {
         Some(c) => {
             if c != 1 {
-                return Err(AppError::NotFound("No lobby with this connect code".to_string()));
+                return Err(AppError::NotFound(
+                    "No lobby with this connect code".to_string(),
+                ));
             }
-        },
+        }
         None => {
-            //TODO: WTF XD idk to do 
+            //TODO: WTF XD idk to do
             tracing::info!("NONE WHILE looking for count of lobbies with this connect code")
-        },
+        }
     }
 
-    let mut user = CreateUser{
+    let mut user = CreateUser {
         username: generate_username(),
         password: generate_password(),
         role: UserRole::Temp,
@@ -388,10 +384,10 @@ pub async fn quick_connect_endpoint_no_user(
     let mut creation_result = create_user(db, user).await;
 
     while let Err(AppError::AlreadyExists(_)) = creation_result {
-        user = CreateUser{
+        user = CreateUser {
             username: generate_username(),
             password: generate_password(),
-            role: UserRole::Temp
+            role: UserRole::Temp,
         };
 
         creation_result = create_user(db, user).await;
@@ -401,17 +397,16 @@ pub async fn quick_connect_endpoint_no_user(
         Ok(u) => {
             let lobby_id = quick_connect(db, &params.connect_code, state, u).await?;
             Ok(Json(lobby_id))
-        },
+        }
         Err(e) => Err(e),
     }
-
 }
 
 pub async fn quick_connect(
     db: &PgPool,
     connect_code: &String,
     state: Arc<State>,
-    user: User
+    user: User,
 ) -> Result<Uuid, AppError> {
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
@@ -424,9 +419,11 @@ pub async fn quick_connect(
         AppError::NotFound(e.to_string())
     })?;
 
-    //TODO: not safe asynchronously 
-    if lobby.code_use_times.is_some() && lobby.code_use_times.unwrap() <= 0 { 
-        return Err(AppError::LobbyFull("Can't connect to lobby with this code".to_string()));
+    //TODO: not safe asynchronously
+    if lobby.code_use_times.is_some() && lobby.code_use_times.unwrap() <= 0 {
+        return Err(AppError::LobbyFull(
+            "Can't connect to lobby with this code".to_string(),
+        ));
     }
 
     let game_id = connect_user(user.id, db, state, lobby.id).await?;

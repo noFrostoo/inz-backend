@@ -1,7 +1,11 @@
 use std::fmt::Display;
 
-use axum::{response::{IntoResponse, Response}, http::StatusCode, Json};
-use serde::{Serialize, Deserialize};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -18,6 +22,7 @@ pub enum AppError {
     TokenCreation,
     InvalidToken,
     AlreadyExists(String),
+    Unauthorized(String),
 }
 
 impl AppError {
@@ -28,13 +33,20 @@ impl AppError {
             AppError::UnprocessableEntity(s) => (StatusCode::UNPROCESSABLE_ENTITY, s.clone()),
             AppError::DbErr(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
             AppError::AlreadyConnected(s) => (StatusCode::BAD_REQUEST, s.clone()),
-            AppError::LobbyFull(s) => (StatusCode::NOT_MODIFIED, s.clone()),//TODO: good code ?
+            AppError::LobbyFull(s) => (StatusCode::NOT_MODIFIED, s.clone()), //TODO: good code ?
             AppError::InternalServerError(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
-            AppError::WrongCredentials => (StatusCode::UNAUTHORIZED, "Wronge credentials".to_string()),
-            AppError::MissingCredentials => (StatusCode::UNAUTHORIZED, "missing credentials".to_string()),
+            AppError::WrongCredentials => {
+                (StatusCode::UNAUTHORIZED, "Wronge credentials".to_string())
+            }
+            AppError::MissingCredentials => {
+                (StatusCode::UNAUTHORIZED, "missing credentials".to_string())
+            }
             AppError::TokenCreation => (StatusCode::INTERNAL_SERVER_ERROR, "bad token".to_string()),
             AppError::InvalidToken => (StatusCode::UNAUTHORIZED, "invalid credentials".to_string()),
-            AppError::AlreadyExists(_) => todo!(), 
+            AppError::AlreadyExists(s) => {
+                (StatusCode::BAD_REQUEST, format!("AlreadyExists: {}", s))
+            }
+            AppError::Unauthorized(s) => (StatusCode::UNAUTHORIZED, format!("Unauthorized: {}", s)),
         }
     }
 }

@@ -7,3 +7,5 @@ create table "user"
     game_id       uuid,
     role          text not null
 );
+
+CREATE TYPE "user_role" AS ENUM ('admin', 'temp', 'gameadmin', 'user');
