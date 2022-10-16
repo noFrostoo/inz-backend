@@ -32,6 +32,7 @@ pub struct Auth {
 pub struct AuthAdmin {
     pub username: String,
     pub user_id: Uuid,
+    pub role: UserRole,
     exp: usize,
 }
 
@@ -39,6 +40,7 @@ pub struct AuthAdmin {
 pub struct AuthUser {
     pub username: String,
     pub user_id: Uuid,
+    pub role: UserRole,
     exp: usize,
 }
 
@@ -46,6 +48,7 @@ pub struct AuthUser {
 pub struct AuthTemp {
     pub username: String,
     pub user_id: Uuid,
+    pub role: UserRole,
     exp: usize,
 }
 
@@ -53,6 +56,7 @@ pub struct AuthTemp {
 pub struct AuthGameAdmin {
     pub username: String,
     pub user_id: Uuid,
+    pub role: UserRole,
     exp: usize,
 }
 
@@ -180,6 +184,7 @@ where
             username: token_data.claims.username,
             user_id: token_data.claims.user_id,
             exp: token_data.claims.exp,
+            role: token_data.claims.role,
         };
 
         Ok(auth)
@@ -207,6 +212,7 @@ where
             username: token_data.claims.username,
             user_id: token_data.claims.user_id,
             exp: token_data.claims.exp,
+            role: token_data.claims.role,
         };
 
         Ok(auth)
@@ -241,6 +247,7 @@ where
             username: token_data.claims.username,
             user_id: token_data.claims.user_id,
             exp: token_data.claims.exp,
+            role: token_data.claims.role,
         };
 
         Ok(auth)
@@ -273,6 +280,7 @@ where
             username: token_data.claims.username,
             user_id: token_data.claims.user_id,
             exp: token_data.claims.exp,
+            role: token_data.claims.role,
         };
 
         Ok(auth)

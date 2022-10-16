@@ -410,7 +410,7 @@ pub async fn quick_connect(
 ) -> Result<Uuid, AppError> {
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
-        r#"select id, name, password, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "lobby" where connect_code = $1"#,
+        r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "lobby" where connect_code = $1"#,
         connect_code
     )
     .fetch_one(db)
@@ -420,7 +420,7 @@ pub async fn quick_connect(
     })?;
 
     //TODO: not safe asynchronously
-    if lobby.code_use_times.is_some() && lobby.code_use_times.unwrap() <= 0 {
+    if lobby.code_use_times <= 0 {
         return Err(AppError::LobbyFull(
             "Can't connect to lobby with this code".to_string(),
         ));

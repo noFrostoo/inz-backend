@@ -25,8 +25,9 @@ pub struct Lobby {
     pub id: Uuid,
     pub name: String,
     pub password: Option<String>,
+    pub public: bool,
     pub connect_code: Option<String>,
-    pub code_use_times: Option<i16>,
+    pub code_use_times: i16,
     pub max_players: i16,
     pub started: bool,
     pub owner_id: Uuid,
@@ -34,7 +35,25 @@ pub struct Lobby {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Settings {}
+pub struct Settings {
+    pub order_queue: i16,
+    pub resource_price: i64,
+    pub order_realization_time: i16, //TODO: Type ?
+    pub start_money: i64,
+    pub play_time: i64,
+    pub round_time: i64,
+    pub demand_style: String,
+    pub transport_cost: i64,
+    pub magazine_cost: i64,
+    pub order_cost: i64,
+    pub demand_cost: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct GameEvent {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct Game {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Template {

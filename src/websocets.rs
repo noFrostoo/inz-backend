@@ -18,6 +18,10 @@ pub enum EventMessages {
     NewUserConnected(LobbyUserUpdate),
     SettingChanged(Settings),
     UserDisconnected(LobbyUserUpdate),
+    GameStart(),
+    RoundEnd,
+    RoundStart,
+    GameEvent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,11 +30,15 @@ pub enum ServerMessage {
     UserDisconnected(LobbyUserUpdate),
     SettingChanged(Settings),
     Error(AppError),
+    RoundEnd,
+    RoundStart,
+    GameEvent,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMessage {
     Error(String), //TODO:
+    RoundEnd,
 }
 
 async fn send_err(
@@ -93,6 +101,10 @@ pub async fn process_message(
                 EventMessages::NewUserConnected(l) => ServerMessage::NewUserConnected(l),
                 EventMessages::SettingChanged(s) => ServerMessage::SettingChanged(s),
                 EventMessages::UserDisconnected(l) => ServerMessage::UserDisconnected(l),
+                EventMessages::GameStart() => todo!(),
+                EventMessages::RoundEnd => todo!(),
+                EventMessages::RoundStart => todo!(),
+                EventMessages::GameEvent => todo!(),
             };
 
             if let Err(e) = sender.send(Message::Item(message)).await {

@@ -29,15 +29,22 @@ use websocets::{process_message, ClientMessage, EventMessages, ServerMessage};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::lobby::{create_lobby_endpoint, delete_lobby_endpoint, get_lobbies_endpoint};
 use crate::{
     auth::{authorize_endpoint, Keys},
-    lobby::get_lobby_endpoint,
+    lobby::{get_lobby_endpoint, update_lobby_endpoint},
+    template::{create_lobby_from_template, create_template_from_lobby_endpoint},
     user::{
         connect_user_endpoint, create_user_endpoint, delete_user_endpoint,
         disconnect_user_endpoint, get_me_endpoint, get_user_endpoint, get_users_endpoint,
         quick_connect_endpoint, quick_connect_endpoint_no_user, register_endpoint,
         update_user_endpoint,
+    },
+};
+use crate::{
+    lobby::{create_lobby_endpoint, delete_lobby_endpoint, get_lobbies_endpoint},
+    template::{
+        create_template_endpoint, delete_template_endpoint, get_template_endpoint,
+        get_templates_endpoint, update_template_endpoint,
     },
 };
 
@@ -97,9 +104,29 @@ async fn main() {
         )
         .route(
             "/lobby/:id",
-            get(get_lobby_endpoint).delete(delete_lobby_endpoint),
+            get(get_lobby_endpoint)
+                .delete(delete_lobby_endpoint)
+                .put(update_lobby_endpoint),
         )
         .route("/lobby/websocket", get(websocket_handler))
+        .route(
+            "/template",
+            post(create_template_endpoint).get(get_templates_endpoint),
+        )
+        .route(
+            "/template/from_lobby",
+            post(create_template_from_lobby_endpoint),
+        )
+        .route(
+            "/template/:id",
+            get(get_template_endpoint)
+                .delete(delete_template_endpoint)
+                .put(update_template_endpoint),
+        )
+        .route(
+            "/template/:id/lobby_create",
+            post(create_lobby_from_template),
+        )
         .route("/authorize", post(authorize_endpoint))
         .route("/register", post(register_endpoint))
         .layer(
