@@ -5,5 +5,6 @@ create table "template"
     name            text not null,
     max_players     SMALLINT     not null,
     owner_id        uuid  unique not null,
-    settings        jsonb        not null
+    settings        jsonb        not null,
+    events          jsonb        not null
 );

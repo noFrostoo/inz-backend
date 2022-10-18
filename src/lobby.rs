@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Extension, Path},
+    extract::{Extension, Path, Query},
     Json,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 use tokio::sync;
 use uuid::Uuid;
 
@@ -13,7 +13,7 @@ use rand::Rng;
 
 use crate::{
     auth::{Auth, AuthGameAdmin},
-    entities::{Lobby, Settings, User, UserRole},
+    entities::{Game, GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     LobbyState, State,
 };
@@ -28,6 +28,19 @@ pub struct CreateLobby {
     pub code_use_times: i16,
     pub max_players: i16,
     pub settings: Option<Settings>,
+    pub events: Option<GameEvents>,
+}
+
+#[derive(Deserialize)]
+pub enum LobbiesType {
+    Public,
+    Private,
+    All,
+}
+
+#[derive(Deserialize)]
+pub struct LobbiesQuery {
+    pub lobby_type: LobbiesType,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -77,9 +90,11 @@ pub async fn create_lobby(
         None => Settings::default(),
     };
 
+    let events = GameEvents {};
+
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
-        r#"insert into "lobby" (name, password, public, connect_code, code_use_times, max_players, owner_id, started, settings) values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>""#,
+        r#"insert into "lobby" (name, password, public, connect_code, code_use_times, max_players, owner_id, started, settings, events) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
         payload.name,
         payload.password,
         payload.public,
@@ -88,7 +103,8 @@ pub async fn create_lobby(
         payload.max_players,
         owner_id,
         false,
-        sqlx::types::Json(settings) as _
+        sqlx::types::Json(settings) as _,
+        sqlx::types::Json(events) as _
     )
     .fetch_one(db)
     .await
@@ -148,7 +164,7 @@ pub async fn get_lobby_endpoint(
 pub async fn get_lobby(id: Uuid, db: &PgPool) -> Result<Lobby, AppError> {
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
-        r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "lobby" where id = $1"#,
+        r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>" from "lobby" where id = $1"#,
         id
     )
     .fetch_one(db)
@@ -193,17 +209,27 @@ async fn get_lobby_response(id: Uuid, db: &PgPool) -> Result<LobbyResponse, AppE
 
 pub async fn get_lobbies_endpoint(
     Extension(ref db): Extension<PgPool>,
+    Query(lobby_query): Query<LobbiesQuery>,
     _auth: Auth,
 ) -> Result<Json<Vec<Lobby>>, AppError> {
-    let lobbies = sqlx::query_as!(Lobby,
-        // language=PostgreSQL
-        r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "lobby" "#,
-    )
-    .fetch_all(db)
-    .await
-    .map_err(|e| {
-        AppError::NotFound(e.to_string())
-    })?;
+    let mut builder = QueryBuilder::new("select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as \"settings: sqlx::types::Json<Settings>\", events as \"events: sqlx::types::Json<GameEvent>\" from \"lobby\" ");
+
+    match lobby_query.lobby_type {
+        LobbiesType::Public => {
+            builder.push("where public = $1").push_bind(true);
+        }
+        LobbiesType::Private => {
+            builder.push("where public = $1").push_bind(false);
+        }
+        LobbiesType::All => {}
+    }
+
+    let query = builder.build_query_as::<Lobby>();
+
+    let lobbies = query
+        .fetch_all(db)
+        .await
+        .map_err(|e| AppError::NotFound(e.to_string()))?;
 
     Ok(Json(lobbies))
 }
@@ -282,9 +308,14 @@ pub async fn update_lobby(
         None => old.lobby.settings.0,
     };
 
+    let events = match payload.events {
+        Some(e) => e,
+        None => old.lobby.events.0,
+    };
+
     sqlx::query_as!(Lobby,
         // language=PostgreSQL
-        r#"update "lobby" set name = $1, password = $2, connect_code = $3, code_use_times = $4, max_players = $5, settings = $6, public = $7 returning id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>""#,
+        r#"update "lobby" set name = $1, password = $2, connect_code = $3, code_use_times = $4, max_players = $5, settings = $6, public = $7, events = $8 returning id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
         payload.name,
         payload.password,
         connect_code,
@@ -292,6 +323,7 @@ pub async fn update_lobby(
         payload.max_players,
         sqlx::types::Json(settings) as _,
         payload.public,
+        sqlx::types::Json(events) as _
     )
     .fetch_one(db)
     .await
@@ -302,6 +334,14 @@ pub async fn update_lobby(
     let lobby = get_lobby_response(id, db).await?;
 
     Ok(lobby)
+}
+
+pub async fn start_game_endpoint(
+    Path(id): Path<Uuid>,
+    Extension(ref db): Extension<PgPool>,
+    Extension(state): Extension<Arc<State>>,
+    auth: AuthGameAdmin,
+) {
 }
 
 fn generate_connect_code() -> String {

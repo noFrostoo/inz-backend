@@ -1,5 +1,10 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
-use sqlx::types::{Json, Uuid};
+use sqlx::{
+    types::{Json, Uuid},
+    FromRow,
+};
 
 #[derive(sqlx::Type, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[sqlx(type_name = "user_role")] // only for PostgreSQL to match a type definition
@@ -20,7 +25,7 @@ pub struct User {
     pub role: UserRole,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, FromRow)]
 pub struct Lobby {
     pub id: Uuid,
     pub name: String,
@@ -32,13 +37,13 @@ pub struct Lobby {
     pub started: bool,
     pub owner_id: Uuid,
     pub settings: Json<Settings>,
+    pub events: Json<GameEvents>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Settings {
     pub order_queue: i16,
     pub resource_price: i64,
-    pub order_realization_time: i16, //TODO: Type ?
     pub start_money: i64,
     pub play_time: i64,
     pub round_time: i64,
@@ -50,10 +55,33 @@ pub struct Settings {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct GameEvent {}
+pub struct GameEvents {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Game {}
+pub struct Game {
+    pub round: i64,
+    pub user_states: Json<BTreeMap<Uuid, UserState>>,
+    pub orders: Json<BTreeMap<Uuid, Order>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct Order {
+    pub recipient: Uuid,
+    pub sender: Uuid,
+    pub value: i64,
+    pub cost: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct UserState {
+    pub user_id: Uuid,
+    pub money: i64,
+    pub magazine_state: i64,
+    pub performance: i64,
+    pub back_order: Vec<Order>,
+    pub current_order: Order,
+    pub user_order: Order, //TODO bad name , what user orders
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Template {
@@ -62,4 +90,5 @@ pub struct Template {
     pub max_players: i16,
     pub owner_id: Uuid,
     pub settings: Json<Settings>,
+    pub events: Json<GameEvents>,
 }

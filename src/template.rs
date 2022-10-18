@@ -5,12 +5,12 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use sqlx::PgPool;
+use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
 use crate::{
     auth::{Auth, AuthGameAdmin},
-    entities::{Lobby, Settings, Template, UserRole},
+    entities::{GameEvents, Lobby, Settings, Template, UserRole},
     error::AppError,
     lobby::{create_lobby, get_lobby, CreateLobby},
     State,
@@ -36,6 +36,7 @@ pub struct CreateTemplate {
     pub name: String,
     pub max_players: i16,
     pub settings: Settings,
+    pub events: GameEvents,
 }
 
 pub async fn create_template_from_lobby_endpoint(
@@ -47,11 +48,12 @@ pub async fn create_template_from_lobby_endpoint(
 
     let template = sqlx::query_as!(Template,
         // language=PostgreSQL
-        r#"insert into "template" (name, max_players, owner_id, settings) values ($1, $2, $3, $4) returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>""#,
+        r#"insert into "template" (name, max_players, owner_id, settings, events) values ($1, $2, $3, $4, $5) returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
         payload.name,
         lobby.max_players,
         auth.user_id,
-        sqlx::types::Json(lobby.settings) as _
+        sqlx::types::Json(lobby.settings) as _,
+        sqlx::types::Json(lobby.events) as _
     )
     .fetch_one(db)
     .await
@@ -67,13 +69,39 @@ pub async fn create_template_endpoint(
     Json(payload): Json<CreateTemplate>,
     auth: AuthGameAdmin,
 ) -> Result<Json<Template>, AppError> {
+    let template = create_template(
+        db,
+        auth.user_id,
+        payload.max_players,
+        payload.name,
+        payload.settings,
+        payload.events,
+    )
+    .await?;
+    // language=PostgreSQL
+
+    Ok(Json(template))
+}
+
+pub async fn create_template<'a, E>(
+    db: E,
+    owner_id: Uuid,
+    max_players: i16,
+    name: String,
+    settings: Settings,
+    events: GameEvents,
+) -> Result<Template, AppError>
+where
+    E: Executor<'a, Database = Postgres>,
+{
     let template = sqlx::query_as!(Template,
         // language=PostgreSQL
-        r#"insert into "template" (name, max_players, owner_id, settings) values ($1, $2, $3, $4) returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>""#,
-        payload.name,
-        payload.max_players,
-        auth.user_id,
-        sqlx::types::Json(payload.settings) as _
+        r#"insert into "template" (name, max_players, owner_id, settings, events) values ($1, $2, $3, $4, $5) returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
+        name,
+        max_players,
+        owner_id,
+        sqlx::types::Json(settings) as _,
+        sqlx::types::Json(events) as _
     )
     .fetch_one(db)
     .await
@@ -81,7 +109,7 @@ pub async fn create_template_endpoint(
         AppError::DbErr(e.to_string())
     })?;
 
-    Ok(Json(template))
+    return Ok(template);
 }
 
 pub async fn get_template_endpoint(
@@ -97,7 +125,7 @@ pub async fn get_template_endpoint(
 pub async fn get_template(id: Uuid, db: &PgPool) -> Result<Template, AppError> {
     let template = sqlx::query_as!(Template,
         // language=PostgreSQL
-        r#"select id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "template" where id = $1  "#,
+        r#"select id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>" from "template" where id = $1  "#,
         id
     )
     .fetch_one(db)
@@ -115,7 +143,7 @@ pub async fn get_templates_endpoint(
 ) -> Result<Json<Vec<Template>>, AppError> {
     let templates = sqlx::query_as!(Template,
         // language=PostgreSQL
-        r#"select id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>" from "template" where owner_id = $1  "#,
+        r#"select id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>" from "template" where owner_id = $1  "#,
         auth.user_id
     )
     .fetch_all(db)
@@ -168,10 +196,11 @@ pub async fn update_template_endpoint(
 
     let template = sqlx::query_as!(Template,
         // language=PostgreSQL
-        r#"update "template" set name = $1, max_players = $2, settings = $3 returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>""#,
+        r#"update "template" set name = $1, max_players = $2, settings = $3, events = $4 returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
         payload.name,
         payload.max_players,
-        sqlx::types::Json(payload.settings) as _
+        sqlx::types::Json(payload.settings) as _,
+        sqlx::types::Json(payload.events) as _
     )
     .fetch_one(db)
     .await
@@ -201,6 +230,7 @@ pub async fn create_lobby_from_template(
             max_players: template.max_players,
             settings: Some(template.settings.0),
             public: payload.public,
+            events: Some(template.events.0),
         },
         state,
         auth,
