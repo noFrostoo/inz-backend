@@ -19,7 +19,7 @@ use crate::{
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     lobby::get_lobby_transaction,
-    websocets::EventMessages,
+    websockets::EventMessages,
     State,
 };
 

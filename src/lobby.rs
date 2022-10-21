@@ -13,10 +13,10 @@ use rand::Rng;
 
 use crate::{
     auth::{Auth, AuthGameAdmin},
-    entities::{GameEvents, GameState, Lobby, Settings, User, UserRole},
+    entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     user::lock_lobby_tables,
-    websocets::EventMessages,
+    websockets::EventMessages,
     LobbyState, State,
 };
 
@@ -425,7 +425,7 @@ pub async fn update_lobby(
             users: lobby.players.clone(),
             lobby: lobby.lobby.clone(),
         }),
-    );
+    )?;
 
     Ok(lobby)
 }

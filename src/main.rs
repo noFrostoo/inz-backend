@@ -5,7 +5,7 @@ mod game;
 mod lobby;
 mod template;
 mod user;
-mod websocets;
+mod websockets;
 
 use auth::Auth;
 use axum::{
@@ -26,7 +26,7 @@ use std::{
 use tokio::sync;
 use tower::ServiceBuilder;
 use uuid::Uuid;
-use websocets::{process_message, ClientMessage, EventMessages, ServerMessage};
+use websockets::{process_message, ClientMessage, EventMessages, ServerMessage};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -134,7 +134,7 @@ async fn main() {
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(db))
-                .layer(Extension(state)), //can add cookie managment here
+                .layer(Extension(state)), //can add cookie management here
         );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
