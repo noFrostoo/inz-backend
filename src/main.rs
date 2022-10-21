@@ -1,6 +1,7 @@
 mod auth;
 mod entities;
 mod error;
+mod game;
 mod lobby;
 mod template;
 mod user;
@@ -31,7 +32,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     auth::{authorize_endpoint, Keys},
-    lobby::{get_lobby_endpoint, update_lobby_endpoint},
+    lobby::{get_lobby_endpoint, start_game_endpoint, update_lobby_endpoint},
     template::{create_lobby_from_template, create_template_from_lobby_endpoint},
     user::{
         connect_user_endpoint, create_user_endpoint, delete_user_endpoint,
@@ -108,6 +109,7 @@ async fn main() {
                 .delete(delete_lobby_endpoint)
                 .put(update_lobby_endpoint),
         )
+        .route("/lobby/:id/start", post(start_game_endpoint))
         .route("/lobby/websocket", get(websocket_handler))
         .route(
             "/template",

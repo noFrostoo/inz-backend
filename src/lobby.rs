@@ -1,4 +1,4 @@
-use std::{sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     extract::{Extension, Path, Query},
@@ -13,9 +13,10 @@ use rand::Rng;
 
 use crate::{
     auth::{Auth, AuthGameAdmin},
-    entities::{Game, GameEvents, Lobby, Settings, User, UserRole},
+    entities::{GameEvents, GameState, Lobby, Settings, User, UserRole},
     error::AppError,
     user::lock_lobby_tables,
+    websocets::EventMessages,
     LobbyState, State,
 };
 
@@ -50,6 +51,13 @@ pub struct LobbyUserUpdate {
     pub user: User,
     pub users_count: usize,
     pub users: Vec<User>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
+pub struct LobbyUpdate {
+    pub id: Uuid,
+    pub users: Vec<User>,
+    pub lobby: Lobby,
 }
 
 //TODO: better name
@@ -222,14 +230,7 @@ async fn get_lobby_response(
 ) -> Result<LobbyResponse, AppError> {
     let lobby = get_lobby_transaction(id, tx).await?;
 
-    let players = sqlx::query_as!(
-        User,
-        // language=PostgreSQL
-        r#"select id, username, password, game_id, role as "role: UserRole" from "user" "#,
-    )
-    .fetch_all(&mut *tx)
-    .await
-    .map_err(|e| AppError::DbErr(e.to_string()))?;
+    let players = get_lobby_players(id, tx).await?;
 
     let owner = sqlx::query_as!(User,
         // language=PostgreSQL
@@ -247,6 +248,22 @@ async fn get_lobby_response(
         players,
         owner,
     })
+}
+
+async fn get_lobby_players(
+    id: Uuid,
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<Vec<User>, AppError> {
+    let players = sqlx::query_as!(
+        User,
+        // language=PostgreSQL
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where game_id = $1 "#,
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+    Ok(players)
 }
 
 pub async fn get_lobbies_endpoint(
@@ -282,9 +299,9 @@ pub async fn delete_lobby_endpoint(
     auth: Auth,
 ) -> Result<(), AppError> {
     let mut tx = db
-    .begin()
-    .await
-    .map_err(|e| AppError::DbErr(e.to_string()))?;
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     lock_lobby_tables(&mut tx).await?;
 
@@ -314,7 +331,9 @@ pub async fn delete_lobby_endpoint(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    tx.commit().await.map_err(|e| AppError::DbErr(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(())
 }
@@ -322,6 +341,7 @@ pub async fn delete_lobby_endpoint(
 pub async fn update_lobby_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
+    Extension(state): Extension<Arc<State>>,
     Json(payload): Json<CreateLobby>,
     auth: AuthGameAdmin,
 ) -> Result<Json<LobbyResponse>, AppError> {
@@ -332,7 +352,7 @@ pub async fn update_lobby_endpoint(
 
     lock_lobby_tables(&mut tx).await?;
 
-    let lobby = update_lobby(id, &mut tx, payload, auth).await?;
+    let lobby = update_lobby(id, &mut tx, payload, state, auth).await?;
 
     tx.commit()
         .await
@@ -345,6 +365,7 @@ pub async fn update_lobby(
     id: Uuid,
     tx: &mut Transaction<'_, Postgres>,
     payload: CreateLobby,
+    state: Arc<State>,
     auth: AuthGameAdmin,
 ) -> Result<LobbyResponse, AppError> {
     let old = get_lobby_response(id, &mut *tx).await?;
@@ -377,7 +398,7 @@ pub async fn update_lobby(
 
     sqlx::query_as!(Lobby,
         // language=PostgreSQL
-        r#"update "lobby" set name = $1, password = $2, connect_code = $3, code_use_times = $4, max_players = $5, settings = $6, public = $7, events = $8 returning id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
+        r#"update "lobby" set name = $1, password = $2, connect_code = $3, code_use_times = $4, max_players = $5, settings = $6, public = $7, events = $8 where id = $9  returning id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
         payload.name,
         payload.password,
         connect_code,
@@ -385,7 +406,8 @@ pub async fn update_lobby(
         payload.max_players,
         sqlx::types::Json(settings) as _,
         payload.public,
-        sqlx::types::Json(events) as _
+        sqlx::types::Json(events) as _,
+        id
     )
     .fetch_one(&mut *tx)
     .await
@@ -395,6 +417,16 @@ pub async fn update_lobby(
 
     let lobby = get_lobby_response(id, &mut *tx).await?;
 
+    send_broadcast_msg(
+        state,
+        id,
+        EventMessages::LobbyUpdate(LobbyUpdate {
+            id,
+            users: lobby.players.clone(),
+            lobby: lobby.lobby.clone(),
+        }),
+    );
+
     Ok(lobby)
 }
 
@@ -402,8 +434,67 @@ pub async fn start_game_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
     Extension(state): Extension<Arc<State>>,
-    auth: AuthGameAdmin,
-) {
+    _auth: AuthGameAdmin,
+) -> Result<(), AppError> {
+    let lobby = get_lobby(id, db).await?;
+
+    if lobby.started {
+        return Err(AppError::GameStarted(lobby.name));
+    }
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    lock_lobby_tables(&mut tx).await?;
+
+    sqlx::query!(
+        // language=PostgreSQL
+        r#"update "lobby" set started = $1 where id = $2 "#,
+        true,
+        id
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    let players = get_lobby_players(id, &mut tx).await?;
+
+    send_broadcast_msg(
+        state,
+        id,
+        EventMessages::GameStart(LobbyUpdate {
+            id,
+            users: players,
+            lobby,
+        }),
+    )?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    Ok(())
+}
+
+fn send_broadcast_msg(state: Arc<State>, id: Uuid, msg: EventMessages) -> Result<(), AppError> {
+    Ok(match state.lobbies.read() {
+        Ok(ctx) => match ctx.get(&id) {
+            Some(lobby_state) => {
+                lobby_state
+                    .sender
+                    .send(msg)
+                    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+            }
+            None => {
+                return Err(AppError::InternalServerError("Looby not found".to_string()));
+            }
+        },
+        Err(e) => {
+            return Err(AppError::InternalServerError(e.to_string()));
+        }
+    })
 }
 
 fn generate_connect_code() -> String {

@@ -18,6 +18,7 @@ use crate::{
     auth::{Auth, AuthAdmin},
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
+    lobby::get_lobby_transaction,
     websocets::EventMessages,
     State,
 };
@@ -196,7 +197,7 @@ pub async fn delete_user_endpoint(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-   Ok(())
+    Ok(())
 }
 
 pub async fn update_user_endpoint(
@@ -269,14 +270,7 @@ pub async fn connect_user(
         ));
     }
 
-    let max_players = sqlx::query_scalar!(
-        // language=PostgreSQL
-        r#"select max_players from "lobby" where id = $1"#,
-        game_id
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| AppError::NotFound(e.to_string()))?;
+    let lobby = get_lobby_transaction(game_id, &mut *tx).await?;
 
     let count = sqlx::query_scalar!(
         // language=PostgreSQL
@@ -287,11 +281,11 @@ pub async fn connect_user(
     .await
     .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
-    if max_players == 0 {
+    if lobby.max_players == 0 {
         return Err(AppError::NotFound("No lobby with given id".to_string()));
     }
 
-    if count.is_some() && count.unwrap() >= max_players as i64 {
+    if count.is_some() && count.unwrap() >= lobby.max_players as i64 {
         return Err(AppError::LobbyFull("Looby full".to_string()));
     }
 

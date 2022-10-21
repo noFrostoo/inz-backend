@@ -58,7 +58,11 @@ pub struct Settings {
 pub struct GameEvents {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Game {
+pub struct Game {}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct GameState {
+    pub id: Uuid,
     pub round: i64,
     pub user_states: Json<BTreeMap<Uuid, UserState>>,
     pub orders: Json<BTreeMap<Uuid, Order>>,

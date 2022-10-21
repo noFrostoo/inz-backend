@@ -23,6 +23,8 @@ pub enum AppError {
     InvalidToken,
     AlreadyExists(String),
     Unauthorized(String),
+    BadRequest(String),
+    GameStarted(String),
 }
 
 impl AppError {
@@ -47,6 +49,11 @@ impl AppError {
                 (StatusCode::BAD_REQUEST, format!("AlreadyExists: {}", s))
             }
             AppError::Unauthorized(s) => (StatusCode::UNAUTHORIZED, format!("Unauthorized: {}", s)),
+            AppError::BadRequest(s) => (StatusCode::BAD_REQUEST, s.clone()),
+            AppError::GameStarted(s) => (
+                StatusCode::BAD_REQUEST,
+                format!("game already started: {}", s),
+            ),
         }
     }
 }

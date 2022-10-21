@@ -5,7 +5,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use crate::{
-    auth::Auth, entities::Settings, error::AppError, lobby::LobbyUserUpdate, user::get_user, State,
+    auth::Auth,
+    entities::Settings,
+    error::AppError,
+    lobby::{LobbyUpdate, LobbyUserUpdate},
+    user::get_user,
+    State,
 };
 //TODO: learn more about it
 use futures::{
@@ -16,9 +21,9 @@ use futures::{
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventMessages {
     NewUserConnected(LobbyUserUpdate),
-    SettingChanged(Settings),
+    LobbyUpdate(LobbyUpdate),
     UserDisconnected(LobbyUserUpdate),
-    GameStart(),
+    GameStart(LobbyUpdate),
     RoundEnd,
     RoundStart,
     GameEvent,
@@ -28,11 +33,12 @@ pub enum EventMessages {
 pub enum ServerMessage {
     NewUserConnected(LobbyUserUpdate),
     UserDisconnected(LobbyUserUpdate),
-    SettingChanged(Settings),
+    LobbyUpdate(LobbyUpdate),
     Error(AppError),
     RoundEnd,
     RoundStart,
     GameEvent,
+    GameStart(LobbyUpdate),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,9 +105,9 @@ pub async fn process_message(
         while let Ok(event_msg) = rx.recv().await {
             let message = match event_msg {
                 EventMessages::NewUserConnected(l) => ServerMessage::NewUserConnected(l),
-                EventMessages::SettingChanged(s) => ServerMessage::SettingChanged(s),
+                EventMessages::LobbyUpdate(u) => ServerMessage::LobbyUpdate(u),
                 EventMessages::UserDisconnected(l) => ServerMessage::UserDisconnected(l),
-                EventMessages::GameStart() => todo!(),
+                EventMessages::GameStart(u) => ServerMessage::GameStart(u),
                 EventMessages::RoundEnd => todo!(),
                 EventMessages::RoundStart => todo!(),
                 EventMessages::GameEvent => todo!(),
