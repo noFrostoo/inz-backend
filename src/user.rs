@@ -8,10 +8,9 @@ use axum::{
     extract::{Extension, Path, Query},
     Json,
 };
-use futures::TryFutureExt;
 use rand::Rng;
 use serde::Deserialize;
-use sqlx::{Executor, PgPool, Postgres, Transaction, TransactionManager};
+use sqlx::{Executor, PgPool, Postgres, Transaction};
 use tracing::{event, Level};
 use uuid::Uuid;
 
@@ -23,7 +22,6 @@ use crate::{
     State,
 };
 
-// the input to our `create_user` handler
 #[derive(Deserialize)]
 pub struct CreateUser {
     username: String,
@@ -51,7 +49,16 @@ pub async fn create_user_endpoint(
     Json(payload): Json<CreateUser>,
     _auth: AuthAdmin,
 ) -> Result<Json<User>, AppError> {
-    let user = create_user(db, payload).await?;
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    let user = create_user(&mut tx, payload).await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(Json(user))
 }
@@ -66,31 +73,33 @@ pub async fn register_endpoint(
         ));
     }
 
-    let user = create_user(db, payload).await?;
-
-    Ok(Json(user))
-}
-
-pub async fn create_user(db: &PgPool, user_data: CreateUser) -> Result<User, AppError> {
-    let argon2 = Argon2::default();
-    let salt = SaltString::generate(&mut OsRng);
-
     let mut tx = db
         .begin()
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    sqlx::query!(r#"lock table "users" in Row Exclusive MODE "#)
-        .execute(&mut tx)
+    let user = create_user(&mut tx, payload).await?;
+
+    tx.commit()
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    Ok(Json(user))
+}
+
+pub async fn create_user(
+    tx: &mut Transaction<'_, Postgres>,
+    user_data: CreateUser,
+) -> Result<User, AppError> {
+    let argon2 = Argon2::default();
+    let salt = SaltString::generate(&mut OsRng);
 
     let count = sqlx::query_scalar!(
         // language=PostgreSQL
         r#"select count(*) from "user" where username = $1"#,
         user_data.username
     )
-    .fetch_one(&mut tx)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
@@ -109,15 +118,11 @@ pub async fn create_user(db: &PgPool, user_data: CreateUser) -> Result<User, App
         })?.to_string(),
         user_data.role as _
     )
-    .fetch_one(&mut tx)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
         AppError::NotCreated(e.to_string())
     })?;
-
-    tx.commit()
-        .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(user)
 }
@@ -182,18 +187,16 @@ pub async fn delete_user_endpoint(
         return Err(AppError::Unauthorized("Can't delete a user".to_string()));
     }
 
-    let res = sqlx::query!(
+    sqlx::query!(
         // language=PostgreSQL
         r#"delete from "user" where id = $1 "#,
         id
     )
     .execute(db)
-    .await;
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    match res {
-        Ok(_) => Ok(()),
-        Err(e) => Err(AppError::NotFound(e.to_string())),
-    }
+   Ok(())
 }
 
 pub async fn update_user_endpoint(
@@ -235,23 +238,30 @@ pub async fn connect_user_endpoint(
     params: Query<ConnectUser>,
     _auth: Auth,
 ) -> Result<Json<Uuid>, AppError> {
-    let lobby_id = connect_user(id, db, state, params.game_id).await?;
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    lock_user_tables(&mut tx).await?;
+    lock_lobby_tables(&mut tx).await?;
+
+    let lobby_id = connect_user(id, &mut tx, state, params.game_id).await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(Json(lobby_id))
 }
 
 pub async fn connect_user(
     id: Uuid,
-    db: &PgPool,
+    tx: &mut Transaction<'_, Postgres>,
     state: Arc<State>,
     game_id: Uuid,
 ) -> Result<Uuid, AppError> {
-    let mut tx = db
-        .begin()
-        .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
-
-    let user = get_user(id, &mut tx).await?;
+    let user = get_user(id, &mut *tx).await?;
 
     if user.game_id.is_some() {
         return Err(AppError::AlreadyConnected(
@@ -259,21 +269,12 @@ pub async fn connect_user(
         ));
     }
 
-    sqlx::query!(r#"lock table "users" in ACCESS EXCLUSIVE MODE "#)
-        .execute(&mut tx)
-        .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
-    sqlx::query!(r#"lock table "lobby" in ACCESS EXCLUSIVE MODE "#)
-        .execute(&mut tx)
-        .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
-
     let max_players = sqlx::query_scalar!(
         // language=PostgreSQL
         r#"select max_players from "lobby" where id = $1"#,
         game_id
     )
-    .fetch_one(&mut tx)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| AppError::NotFound(e.to_string()))?;
 
@@ -282,7 +283,7 @@ pub async fn connect_user(
         r#"select count(*) from "user" where game_id = $1"#,
         game_id
     )
-    .fetch_one(&mut tx)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
@@ -300,7 +301,7 @@ pub async fn connect_user(
         game_id,
         id
     )
-    .execute(&mut tx)
+    .execute(&mut *tx)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
@@ -309,15 +310,11 @@ pub async fn connect_user(
         r#"select id, username, password, game_id, role as "role: UserRole" from "user" where game_id = $1 "#,
         game_id
     )
-    .fetch_all(&mut tx)
+    .fetch_all(&mut *tx)
     .await
     .map_err(|e| {
         AppError::DbErr(e.to_string())
     })?;
-
-    tx.commit()
-        .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     match state.lobbies.read() {
         Ok(ctx) => match ctx.get(&game_id) {
@@ -346,6 +343,28 @@ pub async fn connect_user(
     Ok(game_id)
 }
 
+pub async fn lock_user_tables<'a, E>(db: E) -> Result<(), AppError>
+where
+    E: Executor<'a, Database = Postgres>,
+{
+    sqlx::query!(r#"lock table "users" in ACCESS EXCLUSIVE MODE "#)
+        .execute(db)
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+    Ok(())
+}
+
+pub async fn lock_lobby_tables<'a, E>(db: E) -> Result<(), AppError>
+where
+    E: Executor<'a, Database = Postgres>,
+{
+    sqlx::query!(r#"lock table "lobby" in ACCESS EXCLUSIVE MODE "#)
+        .execute(db)
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+    Ok(())
+}
+
 pub async fn disconnect_user_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
@@ -369,9 +388,21 @@ pub async fn quick_connect_endpoint(
     Extension(state): Extension<Arc<State>>,
     auth: Auth,
 ) -> Result<Json<Uuid>, AppError> {
-    let user = get_user(auth.user_id, db).await?;
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    let lobby_id = quick_connect(db, &params.connect_code, state, user).await?;
+    lock_user_tables(&mut tx).await?;
+    lock_lobby_tables(&mut tx).await?;
+
+    let user = get_user(auth.user_id, &mut tx).await?;
+
+    let lobby_id = quick_connect(&mut tx, &params.connect_code, state, user).await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(Json(lobby_id))
 }
@@ -381,12 +412,17 @@ pub async fn quick_connect_endpoint_no_user(
     params: Query<QuickConnect>,
     Extension(state): Extension<Arc<State>>,
 ) -> Result<Json<Uuid>, AppError> {
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
     let count = sqlx::query_scalar!(
         // language=PostgreSQL
         r#"select count(*) from "lobby" where connect_code = $1"#,
         params.connect_code
     )
-    .fetch_one(db)
+    .fetch_one(&mut tx)
     .await
     .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
@@ -410,7 +446,7 @@ pub async fn quick_connect_endpoint_no_user(
         role: UserRole::Temp,
     };
 
-    let mut creation_result = create_user(db, user).await;
+    let mut creation_result = create_user(&mut tx, user).await;
 
     while let Err(AppError::AlreadyExists(_)) = creation_result {
         user = CreateUser {
@@ -419,20 +455,26 @@ pub async fn quick_connect_endpoint_no_user(
             role: UserRole::Temp,
         };
 
-        creation_result = create_user(db, user).await;
+        creation_result = create_user(&mut tx, user).await;
     }
 
-    match creation_result {
+    let res = match creation_result {
         Ok(u) => {
-            let lobby_id = quick_connect(db, &params.connect_code, state, u).await?;
+            let lobby_id = quick_connect(&mut tx, &params.connect_code, state, u).await?;
             Ok(Json(lobby_id))
         }
         Err(e) => Err(e),
-    }
+    };
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    res
 }
 
 pub async fn quick_connect(
-    db: &PgPool,
+    tx: &mut Transaction<'_, Postgres>,
     connect_code: &String,
     state: Arc<State>,
     user: User,
@@ -442,7 +484,7 @@ pub async fn quick_connect(
         r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>" from "lobby" where connect_code = $1"#,
         connect_code
     )
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
         AppError::NotFound(e.to_string())
@@ -455,7 +497,7 @@ pub async fn quick_connect(
         ));
     }
 
-    let game_id = connect_user(user.id, db, state, lobby.id).await?;
+    let game_id = connect_user(user.id, &mut *tx, state, lobby.id).await?;
 
     Ok(game_id)
 }

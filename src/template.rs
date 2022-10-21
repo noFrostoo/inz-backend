@@ -220,8 +220,13 @@ pub async fn create_lobby_from_template(
 ) -> Result<Json<Lobby>, AppError> {
     let template = get_template(id, db).await?;
 
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
     let lobby = create_lobby(
-        db,
+        &mut tx,
         CreateLobby {
             name: payload.name,
             password: Some(payload.password),
@@ -236,6 +241,10 @@ pub async fn create_lobby_from_template(
         auth,
     )
     .await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(Json(lobby))
 }
