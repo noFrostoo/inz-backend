@@ -60,7 +60,7 @@ pub struct AuthGameAdmin {
     exp: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AuthBody {
     pub access_token: String,
     pub token_type: String,
@@ -75,7 +75,7 @@ impl AuthBody {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AuthPayload {
     pub username: String,
     pub password: String,
@@ -110,18 +110,18 @@ pub async fn authorize_endpoint(
     )
     .fetch_one(db)
     .await
-    .map_err(|_| {
-        AppError::WrongCredentials
+    .map_err(|e| {
+        AppError::WrongCredentials(e.to_string())
     })?;
 
     let parsed_hash = PasswordHash::new(&user.password).map_err(|e| {
         eprint!("{}", e.to_string());
-        AppError::WrongCredentials
+        AppError::WrongCredentials(e.to_string())
     })?;
 
     Argon2::default()
         .verify_password(payload.password.as_bytes(), &parsed_hash)
-        .map_err(|_| AppError::WrongCredentials)?;
+        .map_err(|e| AppError::WrongCredentials(e.to_string()))?;
 
     let claims = Auth {
         username: user.username,

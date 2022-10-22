@@ -6,7 +6,7 @@ use argon2::{
 };
 
 use rand::Rng;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Executor, Postgres, Transaction};
 use tracing::{event, Level};
 use uuid::Uuid;
@@ -15,28 +15,29 @@ use crate::{
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     lobby::lobby::{get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
+    user,
     websockets::EventMessages,
     State,
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct CreateUser {
     pub username: String,
     pub password: String,
     pub role: UserRole,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct UpdateUser {
     pub password: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct ConnectUser {
     pub game_id: Uuid,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct QuickConnect {
     pub connect_code: String,
 }
@@ -73,6 +74,13 @@ pub async fn create_user(
         return Err(AppError::AlreadyExists(
             "User exists with this username".to_string(),
         ));
+    }
+
+    if user_data.username == "" || user_data.password == "" {
+        return Err(AppError::EmptyData(format!(
+            "user_data: {}, {}",
+            user_data.username, user_data.password
+        )));
     }
 
     let user = sqlx::query_as!(User,

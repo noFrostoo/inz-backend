@@ -17,14 +17,14 @@ tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
 tracing = "0.1.36"
 tower = { version = "0.4", features = ["full"] }
 axum-macros = "0.2.3"
-sqlx = { version = "0.6", features = [ "macros", "runtime-tokio-rustls", "postgres", "uuid", "json"] }
+sqlx = { version = "0.6.2", features = [ "macros", "runtime-tokio-rustls", "postgres", "uuid", "json"] }
 argon2 = "0.4.1"
 dotenv = "0.15.0"
 rand = "0.8.5"
 rand_core = { version = "0.6", features = ["std"] }
 axum-typed-websockets = "0.4.0"
 futures = "0.3"
-
+hyper = { version = "0.14", features = ["full"] }
 
 [dependencies.uuid]
 version = "1.1.2"

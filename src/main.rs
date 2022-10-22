@@ -89,7 +89,33 @@ async fn main() {
         lobbies: RwLock::new(HashMap::new()),
     });
 
-    let app = Router::new()
+    let app = create_app(db, state);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    tracing::debug!("listening on {}", addr);
+
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
+}
+
+async fn root() -> &'static str {
+    "Hello, World!"
+}
+
+async fn websocket_handler(
+    ws: WebSocketUpgrade<ServerMessage, ClientMessage>,
+    Extension(state): Extension<Arc<State>>,
+    Extension(ref db): Extension<PgPool>,
+    auth: Auth,
+) -> impl IntoResponse {
+    let db_clone = db.clone();
+    ws.on_upgrade(|socket| process_message(socket, state, db_clone, auth))
+}
+
+pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
+    Router::new()
         .route("/", get(root))
         .route("/users", post(create_user_endpoint).get(get_users_endpoint))
         .route(
@@ -139,27 +165,5 @@ async fn main() {
             ServiceBuilder::new()
                 .layer(Extension(db))
                 .layer(Extension(state)), //can add cookie management here
-        );
-
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::debug!("listening on {}", addr);
-
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
-        .await
-        .unwrap();
-}
-
-async fn root() -> &'static str {
-    "Hello, World!"
-}
-
-async fn websocket_handler(
-    ws: WebSocketUpgrade<ServerMessage, ClientMessage>,
-    Extension(state): Extension<Arc<State>>,
-    Extension(ref db): Extension<PgPool>,
-    auth: Auth,
-) -> impl IntoResponse {
-    let db_clone = db.clone();
-    ws.on_upgrade(|socket| process_message(socket, state, db_clone, auth))
+        )
 }

@@ -18,7 +18,7 @@ pub enum AppError {
     NotConnected,
     LobbyFull(String),
     InternalServerError(String),
-    WrongCredentials,
+    WrongCredentials(String),
     MissingCredentials,
     TokenCreation,
     InvalidToken,
@@ -26,6 +26,7 @@ pub enum AppError {
     Unauthorized(String),
     BadRequest(String),
     GameStarted(String),
+    EmptyData(String),
 }
 
 impl AppError {
@@ -41,9 +42,10 @@ impl AppError {
             ),
             AppError::LobbyFull(s) => (StatusCode::NOT_MODIFIED, s.clone()), //TODO: good code ?
             AppError::InternalServerError(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
-            AppError::WrongCredentials => {
-                (StatusCode::UNAUTHORIZED, "Wrong credentials".to_string())
-            }
+            AppError::WrongCredentials(s) => (
+                StatusCode::UNAUTHORIZED,
+                format!("Wrong credentials: {}", s),
+            ),
             AppError::MissingCredentials => {
                 (StatusCode::UNAUTHORIZED, "missing credentials".to_string())
             }
@@ -59,6 +61,7 @@ impl AppError {
                 format!("game already started: {}", s),
             ),
             AppError::NotConnected => (StatusCode::BAD_REQUEST, format!("User Not connected")),
+            AppError::EmptyData(s) => (StatusCode::BAD_REQUEST, format!("Empty data: {}", s)),
         }
     }
 }
