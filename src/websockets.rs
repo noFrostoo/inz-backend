@@ -7,8 +7,8 @@ use sqlx::PgPool;
 use crate::{
     auth::Auth,
     error::AppError,
-    lobby::{LobbyUpdate, LobbyUserUpdate},
-    user::get_user,
+    lobby::lobby::{LobbyUpdate, LobbyUserUpdate},
+    user::user::get_user,
     State,
 };
 //TODO: learn more about it

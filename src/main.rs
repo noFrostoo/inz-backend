@@ -32,21 +32,25 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     auth::{authorize_endpoint, Keys},
-    lobby::{get_lobby_endpoint, start_game_endpoint, update_lobby_endpoint},
+    lobby::{
+        lobby::get_lobbies_endpoint,
+        lobby_endpoints::{
+            create_lobby_endpoint, delete_lobby_endpoint, get_lobby_endpoint, start_game_endpoint,
+            update_lobby_endpoint,
+        },
+    },
     template::{create_lobby_from_template, create_template_from_lobby_endpoint},
-    user::{
+    user::user_endpoints::{
         connect_user_endpoint, create_user_endpoint, delete_user_endpoint,
         disconnect_user_endpoint, get_me_endpoint, get_user_endpoint, get_users_endpoint,
         quick_connect_endpoint, quick_connect_endpoint_no_user, register_endpoint,
         update_user_endpoint,
     },
 };
-use crate::{
-    lobby::{create_lobby_endpoint, delete_lobby_endpoint, get_lobbies_endpoint},
-    template::{
-        create_template_endpoint, delete_template_endpoint, get_template_endpoint,
-        get_templates_endpoint, update_template_endpoint,
-    },
+
+use crate::template::{
+    create_template_endpoint, delete_template_endpoint, get_template_endpoint,
+    get_templates_endpoint, update_template_endpoint,
 };
 
 pub struct LobbyState {

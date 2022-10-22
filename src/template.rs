@@ -12,7 +12,7 @@ use crate::{
     auth::{Auth, AuthGameAdmin},
     entities::{GameEvents, Lobby, Settings, Template, UserRole},
     error::AppError,
-    lobby::{create_lobby, get_lobby, CreateLobby},
+    lobby::lobby::{create_lobby, get_lobby, CreateLobby},
     State,
 };
 
