@@ -18,7 +18,7 @@ use crate::{
     auth::{Auth, AuthAdmin},
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
-    lobby::get_lobby_transaction,
+    lobby::{get_lobby_players, get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
     websockets::EventMessages,
     State,
 };
@@ -54,6 +54,8 @@ pub async fn create_user_endpoint(
         .begin()
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    event!(Level::INFO, "creating user: {}", payload.username);
 
     let user = create_user(&mut tx, payload).await?;
 
@@ -104,7 +106,19 @@ pub async fn create_user(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
+    event!(
+        Level::TRACE,
+        "SELECT for user count with username: {}",
+        user_data.username
+    );
+
     if count.is_none() || (count.is_some() && count.unwrap() != 0) {
+        event!(
+            Level::ERROR,
+            "user with username: {} exists",
+            user_data.username
+        );
+
         return Err(AppError::AlreadyExists(
             "User exists with this username".to_string(),
         ));
@@ -124,6 +138,8 @@ pub async fn create_user(
     .map_err(|e| {
         AppError::NotCreated(e.to_string())
     })?;
+
+    event!(Level::INFO, "created user: {}", user.username);
 
     Ok(user)
 }
@@ -188,6 +204,14 @@ pub async fn delete_user_endpoint(
         return Err(AppError::Unauthorized("Can't delete a user".to_string()));
     }
 
+    let user = get_user(id, db).await?;
+
+    if let Some(id) = user.game_id {
+        return Err(AppError::UserConnected(id.to_string()));
+    }
+
+    event!(Level::DEBUG, "Deleting a user: {}", user.id);
+
     sqlx::query!(
         // language=PostgreSQL
         r#"delete from "user" where id = $1 "#,
@@ -196,6 +220,8 @@ pub async fn delete_user_endpoint(
     .execute(db)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    event!(Level::INFO, "User deleted: {}", user.id);
 
     Ok(())
 }
@@ -217,6 +243,8 @@ pub async fn update_user_endpoint(
         password = new_password;
     }
 
+    event!(Level::DEBUG, "Updating a user: {}", id);
+
     let updated = sqlx::query_as!(User,
         // language=PostgreSQL
         r#"update "user" set password = $1 where id = $2 returning id, username, password, game_id, role as "role: UserRole" "#,
@@ -228,6 +256,8 @@ pub async fn update_user_endpoint(
     .map_err(|e| {
         AppError::DbErr(e.to_string())
     })?;
+
+    event!(Level::INFO, "Updated a user: {}", id);
 
     Ok(Json(updated))
 }
@@ -244,10 +274,21 @@ pub async fn connect_user_endpoint(
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
+    event!(
+        Level::INFO,
+        "Connecting user: {} to game: {}",
+        id,
+        params.game_id
+    );
+
     lock_user_tables(&mut tx).await?;
     lock_lobby_tables(&mut tx).await?;
 
+    event!(Level::DEBUG, "Tables locked");
+
     let lobby_id = connect_user(id, &mut tx, state, params.game_id).await?;
+
+    event!(Level::INFO, "User: {} connected, committing...", id);
 
     tx.commit()
         .await
@@ -264,10 +305,8 @@ pub async fn connect_user(
 ) -> Result<Uuid, AppError> {
     let user = get_user(id, &mut *tx).await?;
 
-    if user.game_id.is_some() {
-        return Err(AppError::AlreadyConnected(
-            "Connected to other game".to_string(),
-        ));
+    if let Some(id) = user.game_id {
+        return Err(AppError::UserConnected(id.to_string()));
     }
 
     let lobby = get_lobby_transaction(game_id, &mut *tx).await?;
@@ -281,13 +320,16 @@ pub async fn connect_user(
     .await
     .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
-    if lobby.max_players == 0 {
-        return Err(AppError::NotFound("No lobby with given id".to_string()));
-    }
-
     if count.is_some() && count.unwrap() >= lobby.max_players as i64 {
         return Err(AppError::LobbyFull("Looby full".to_string()));
     }
+
+    event!(
+        Level::DEBUG,
+        "Lobby: {} not full, ready to connect user: {}",
+        game_id,
+        id
+    );
 
     sqlx::query!(
         // language=PostgreSQL
@@ -310,29 +352,22 @@ pub async fn connect_user(
         AppError::DbErr(e.to_string())
     })?;
 
-    match state.lobbies.read() {
-        Ok(ctx) => match ctx.get(&game_id) {
-            Some(lobby_state) => {
-                lobby_state
-                    .sender
-                    .send(EventMessages::NewUserConnected(
-                        crate::lobby::LobbyUserUpdate {
-                            game_id: game_id,
-                            user: user,
-                            users_count: users.len(),
-                            users: users,
-                        },
-                    ))
-                    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-            }
-            None => {
-                return Err(AppError::InternalServerError("Looby not found".to_string()));
-            }
-        },
-        Err(e) => {
-            return Err(AppError::InternalServerError(e.to_string()));
-        }
-    }
+    event!(
+        Level::DEBUG,
+        "User: {} connected, sending a broadcast msg",
+        id
+    );
+
+    send_broadcast_msg(
+        state,
+        game_id,
+        EventMessages::NewUserConnected(crate::lobby::LobbyUserUpdate {
+            game_id: game_id,
+            user: user,
+            users_count: users.len(),
+            users: users,
+        }),
+    )?;
 
     Ok(game_id)
 }
@@ -341,6 +376,8 @@ pub async fn lock_user_tables<'a, E>(db: E) -> Result<(), AppError>
 where
     E: Executor<'a, Database = Postgres>,
 {
+    event!(Level::DEBUG, "Locking users table");
+
     sqlx::query!(r#"lock table "users" in ACCESS EXCLUSIVE MODE "#)
         .execute(db)
         .await
@@ -352,6 +389,8 @@ pub async fn lock_lobby_tables<'a, E>(db: E) -> Result<(), AppError>
 where
     E: Executor<'a, Database = Postgres>,
 {
+    event!(Level::DEBUG, "Locking lobby table");
+
     sqlx::query!(r#"lock table "lobby" in ACCESS EXCLUSIVE MODE "#)
         .execute(db)
         .await
@@ -362,8 +401,26 @@ where
 pub async fn disconnect_user_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
+    Extension(state): Extension<Arc<State>>,
     _auth: Auth,
 ) -> Result<(), AppError> {
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    let user = get_user(id, &mut tx).await?;
+
+    if let None = user.game_id {
+        return Err(AppError::NotConnected);
+    }
+
+    let game_id = user.game_id.unwrap();
+
+    let users = get_lobby_players(game_id, &mut tx).await?;
+
+    event!(Level::INFO, "Disconnecting user: {}", id);
+
     sqlx::query!(
         // language=PostgreSQL
         r#"update "user" set game_id = NULL where id = $1"#,
@@ -372,6 +429,25 @@ pub async fn disconnect_user_endpoint(
     .execute(db)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    event!(Level::DEBUG, "Disconnected user: {}, sending msg", id);
+
+    send_broadcast_msg(
+        state,
+        id,
+        EventMessages::UserDisconnected(LobbyUserUpdate {
+            game_id: game_id,
+            user,
+            users_count: users.len(),
+            users,
+        }),
+    )?;
+
+    event!(Level::DEBUG, "Disconnected user: {}, committing...", id);
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(())
 }
@@ -387,12 +463,27 @@ pub async fn quick_connect_endpoint(
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
+    event!(
+        Level::INFO,
+        "Quick connecting code: {}, user: {}",
+        params.connect_code,
+        auth.user_id
+    );
+
     lock_user_tables(&mut tx).await?;
     lock_lobby_tables(&mut tx).await?;
+
+    event!(Level::DEBUG, "Tables locked");
 
     let user = get_user(auth.user_id, &mut tx).await?;
 
     let lobby_id = quick_connect(&mut tx, &params.connect_code, state, user).await?;
+
+    event!(
+        Level::INFO,
+        "User: {}, quick connected, committing...",
+        auth.user_id
+    );
 
     tx.commit()
         .await
@@ -434,11 +525,24 @@ pub async fn quick_connect_endpoint_no_user(
         }
     }
 
+    event!(
+        Level::INFO,
+        "Quick connecting code: {}, with no user",
+        params.connect_code,
+    );
+
+    lock_user_tables(&mut tx).await?;
+    lock_lobby_tables(&mut tx).await?;
+
+    event!(Level::DEBUG, "Tables locked");
+
     let mut user = CreateUser {
         username: generate_username(),
         password: generate_password(),
         role: UserRole::Temp,
     };
+
+    event!(Level::TRACE, "Creating temp user");
 
     let mut creation_result = create_user(&mut tx, user).await;
 
@@ -452,19 +556,22 @@ pub async fn quick_connect_endpoint_no_user(
         creation_result = create_user(&mut tx, user).await;
     }
 
-    let res = match creation_result {
-        Ok(u) => {
-            let lobby_id = quick_connect(&mut tx, &params.connect_code, state, u).await?;
-            Ok(Json(lobby_id))
-        }
-        Err(e) => Err(e),
-    };
+    let temp_usr = creation_result?;
+
+    event!(
+        Level::DEBUG,
+        "Temp user created: {}, username: {}",
+        temp_usr.id,
+        temp_usr.username
+    );
+
+    let lobby_id = quick_connect(&mut tx, &params.connect_code, state, temp_usr).await?;
 
     tx.commit()
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    res
+    Ok(Json(lobby_id))
 }
 
 pub async fn quick_connect(
@@ -484,7 +591,6 @@ pub async fn quick_connect(
         AppError::NotFound(e.to_string())
     })?;
 
-    //TODO: not safe asynchronously
     if lobby.code_use_times <= 0 {
         return Err(AppError::LobbyFull(
             "Can't connect to lobby with this code".to_string(),

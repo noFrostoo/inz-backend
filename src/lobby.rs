@@ -250,7 +250,7 @@ async fn get_lobby_response(
     })
 }
 
-async fn get_lobby_players(
+pub async fn get_lobby_players(
     id: Uuid,
     tx: &mut Transaction<'_, Postgres>,
 ) -> Result<Vec<User>, AppError> {
@@ -478,7 +478,7 @@ pub async fn start_game_endpoint(
     Ok(())
 }
 
-fn send_broadcast_msg(state: Arc<State>, id: Uuid, msg: EventMessages) -> Result<(), AppError> {
+pub fn send_broadcast_msg(state: Arc<State>, id: Uuid, msg: EventMessages) -> Result<(), AppError> {
     Ok(match state.lobbies.read() {
         Ok(ctx) => match ctx.get(&id) {
             Some(lobby_state) => {
