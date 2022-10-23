@@ -1,26 +1,20 @@
 use axum::{
     body::Body,
     http::{Request, StatusCode},
-    Router,
 };
-use serde::Serialize;
+
 use sqlx::PgPool;
 use std::str;
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+
 use tower::Service;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::{
-    auth::{AuthBody, AuthPayload},
+    auth::{AuthPayload},
     common_tests::{authorize_admin, authorize_user, build_request, create_test_app},
-    create_app,
     entities::{User, UserRole},
     user::user::{CreateUser, UpdateUser},
-    State,
 };
 
 #[sqlx::test(fixtures("users"))]
@@ -268,7 +262,7 @@ async fn test_get_create(db: PgPool) {
     let response = app
         .oneshot(build_request(
             "GET",
-            &*format!("/users/{}", resp_user.id.to_string()),
+            &*format!("/users/{}", resp_user.id),
             opt,
             Some(&auth),
         ))

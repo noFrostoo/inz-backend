@@ -159,7 +159,7 @@ pub async fn get_lobby(id: Uuid, db: &PgPool) -> Result<Lobby, AppError> {
         AppError::NotFound(e.to_string())
     })?;
 
-    return Ok(lobby);
+    Ok(lobby)
 }
 
 pub async fn get_lobby_transaction(
@@ -177,7 +177,7 @@ pub async fn get_lobby_transaction(
         AppError::NotFound(e.to_string())
     })?;
 
-    return Ok(lobby);
+    Ok(lobby)
 }
 
 //TODO: refactor name
@@ -320,7 +320,7 @@ pub async fn update_lobby(
 }
 
 pub fn send_broadcast_msg(state: Arc<State>, id: Uuid, msg: EventMessages) -> Result<(), AppError> {
-    Ok(match state.lobbies.read() {
+    match state.lobbies.read() {
         Ok(ctx) => match ctx.get(&id) {
             Some(lobby_state) => {
                 lobby_state
@@ -335,7 +335,8 @@ pub fn send_broadcast_msg(state: Arc<State>, id: Uuid, msg: EventMessages) -> Re
         Err(e) => {
             return Err(AppError::InternalServerError(e.to_string()));
         }
-    })
+    };
+    Ok(())
 }
 
 fn generate_connect_code() -> String {

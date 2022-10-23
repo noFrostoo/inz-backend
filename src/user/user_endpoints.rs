@@ -210,7 +210,7 @@ pub async fn disconnect_user_endpoint(
 
     let user = get_user(id, &mut tx).await?;
 
-    if let None = user.game_id {
+    if user.game_id.is_none() {
         return Err(AppError::NotConnected);
     }
 
@@ -235,7 +235,7 @@ pub async fn disconnect_user_endpoint(
         state,
         id,
         EventMessages::UserDisconnected(LobbyUserUpdate {
-            game_id: game_id,
+            game_id,
             user,
             users_count: users.len(),
             users,

@@ -115,7 +115,6 @@ pub async fn authorize_endpoint(
     })?;
 
     let parsed_hash = PasswordHash::new(&user.password).map_err(|e| {
-        eprint!("{}", e.to_string());
         AppError::WrongCredentials(e.to_string())
     })?;
 

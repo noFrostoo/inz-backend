@@ -70,7 +70,7 @@ pub async fn process_message(
         Err(e) => {
             send_err(
                 sender.borrow_mut(),
-                AppError::InternalServerError(format!("error looking for user: {}", e.to_string())),
+                AppError::InternalServerError(format!("error looking for user: {}", e)),
             )
             .await;
             return;

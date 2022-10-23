@@ -15,7 +15,6 @@ use crate::{
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     lobby::lobby::{get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
-    user,
     websockets::EventMessages,
     State,
 };
@@ -76,7 +75,7 @@ pub async fn create_user(
         ));
     }
 
-    if user_data.username == "" || user_data.password == "" {
+    if user_data.username.is_empty() || user_data.password.is_empty() {
         return Err(AppError::EmptyData(format!(
             "user_data: {}, {}",
             user_data.username, user_data.password
@@ -130,7 +129,7 @@ pub async fn get_user<'a, E>(id: Uuid, db: E) -> Result<User, AppError>
 where
     E: Executor<'a, Database = Postgres>,
 {
-    Ok(sqlx::query_as!(User,
+    sqlx::query_as!(User,
         // language=PostgreSQL
         r#"select id, username, password, game_id, role as "role: UserRole" from "user" where id = $1"#,
         id
@@ -139,7 +138,7 @@ where
     .await
     .map_err(|e| {
         AppError::NotFound(e.to_string())
-    })?)
+    })
 }
 
 pub async fn connect_user(
@@ -207,10 +206,10 @@ pub async fn connect_user(
         state,
         game_id,
         EventMessages::NewUserConnected(LobbyUserUpdate {
-            game_id: game_id,
-            user: user,
+            game_id,
+            user,
             users_count: users.len(),
-            users: users,
+            users,
         }),
     )?;
 

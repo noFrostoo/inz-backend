@@ -60,7 +60,7 @@ impl AppError {
                 StatusCode::BAD_REQUEST,
                 format!("game already started: {}", s),
             ),
-            AppError::NotConnected => (StatusCode::BAD_REQUEST, format!("User Not connected")),
+            AppError::NotConnected => (StatusCode::BAD_REQUEST, "User Not connected".to_string()),
             AppError::EmptyData(s) => (StatusCode::BAD_REQUEST, format!("Empty data: {}", s)),
         }
     }

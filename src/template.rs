@@ -109,7 +109,7 @@ where
         AppError::DbErr(e.to_string())
     })?;
 
-    return Ok(template);
+    Ok(template)
 }
 
 pub async fn get_template_endpoint(
