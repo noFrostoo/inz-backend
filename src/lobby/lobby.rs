@@ -341,7 +341,7 @@ pub fn send_broadcast_msg(state: Arc<State>, id: Uuid, msg: EventMessages) -> Re
 
 fn generate_connect_code() -> String {
     let mut rng = rand::thread_rng();
-    let letter: char = rng.gen_range(b'A'..b'Z') as char;
+    let letter: char = rng.gen_range(b'A'..=b'Z') as char;
     let number: u32 = rng.gen_range(0..999999);
     format!("{}{:06}", letter, number)
 }

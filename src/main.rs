@@ -1,4 +1,5 @@
 mod auth;
+#[cfg(test)]
 mod common_tests;
 mod entities;
 mod error;

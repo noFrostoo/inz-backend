@@ -280,7 +280,7 @@ pub fn generate_password() -> String {
     let mut rng = rand::thread_rng();
     let mut s = Vec::new();
     for _ in 1..10 {
-        let letter: char = rng.gen_range(b'A'..b'Z') as char;
+        let letter: char = rng.gen_range(b'A'..=b'Z') as char;
         s.push(letter);
     }
     let number: u64 = rng.gen_range(0..9999999999999);
