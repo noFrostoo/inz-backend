@@ -116,8 +116,14 @@ pub async fn create_lobby(
                 }
                 None => {
                     //TODO: fix magic number
-                    let (tx, _rx) = sync::broadcast::channel(33);
-                    ctx.insert(lobby.id, LobbyState { sender: tx });
+                    let (tx, rx) = sync::broadcast::channel(33);
+                    ctx.insert(
+                        lobby.id,
+                        LobbyState {
+                            sender: Arc::new(tx),
+                            receiver: Arc::new(rx),
+                        },
+                    );
                 }
             }
         }

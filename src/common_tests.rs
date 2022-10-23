@@ -8,7 +8,11 @@ use std::{
 };
 use tower::Service;
 use tower::ServiceExt;
+use uuid::Uuid;
 
+use crate::auth::AuthGameAdmin;
+use crate::entities::{GameEvents, Lobby, Settings};
+use crate::lobby::lobby::{create_lobby, CreateLobby};
 use crate::{
     auth::{AuthBody, AuthPayload},
     create_app, State,
@@ -98,4 +102,66 @@ where
     };
 
     req.body(request_body).unwrap()
+}
+
+pub async fn create_test_lobbies(
+    db: PgPool,
+    state: Arc<State>,
+    user: &str,
+    user_id: &str,
+) -> (Lobby, Lobby) {
+    let mut tx = db.begin().await.unwrap();
+
+    let lobby_params = CreateLobby {
+        name: "temp-1".to_string(),
+        password: Some("temp".to_string()),
+        public: true,
+        generate_connect_code: false,
+        code_use_times: 0,
+        max_players: 3,
+        settings: Some(Settings::default()),
+        events: Some(GameEvents {}),
+    };
+
+    let lobby_1 = create_lobby(
+        &mut tx,
+        lobby_params,
+        state.clone(),
+        AuthGameAdmin {
+            username: user.to_string(),
+            user_id: Uuid::parse_str(user_id).unwrap(),
+            role: crate::entities::UserRole::Admin,
+            exp: 20000000,
+        },
+    )
+    .await
+    .unwrap();
+
+    let lobby_params = CreateLobby {
+        name: "temp-2".to_string(),
+        password: None,
+        public: false,
+        generate_connect_code: true,
+        code_use_times: 2,
+        max_players: 3,
+        settings: Some(Settings::default()),
+        events: Some(GameEvents {}),
+    };
+
+    let lobby_2 = create_lobby(
+        &mut tx,
+        lobby_params,
+        state,
+        AuthGameAdmin {
+            username: user.to_string(),
+            user_id: Uuid::parse_str(user_id).unwrap(),
+            role: crate::entities::UserRole::Admin,
+            exp: 20000000,
+        },
+    )
+    .await
+    .unwrap();
+
+    tx.commit().await.unwrap();
+    (lobby_1, lobby_2)
 }

@@ -56,7 +56,8 @@ use crate::template::{
 };
 
 pub struct LobbyState {
-    sender: sync::broadcast::Sender<EventMessages>,
+    sender: Arc<sync::broadcast::Sender<EventMessages>>,
+    receiver: Arc<sync::broadcast::Receiver<EventMessages>>,
 }
 
 pub struct State {

@@ -11,10 +11,12 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::{
-    auth::{AuthPayload},
-    common_tests::{authorize_admin, authorize_user, build_request, create_test_app},
+    auth::{self, Auth, AuthPayload},
+    common_tests::{
+        authorize_admin, authorize_user, build_request, create_test_app, create_test_lobbies,
+    },
     entities::{User, UserRole},
-    user::user::{CreateUser, UpdateUser},
+    user::user::{ConnectUser, CreateUser, UpdateUser},
 };
 
 #[sqlx::test(fixtures("users"))]
@@ -262,7 +264,7 @@ async fn test_get_create(db: PgPool) {
     let response = app
         .oneshot(build_request(
             "GET",
-            &*format!("/users/{}", resp_user.id),
+            format!("/users/{}", resp_user.id).as_str(),
             opt,
             Some(&auth),
         ))
@@ -567,3 +569,97 @@ async fn test_get_update_not_self_as_admin(db: PgPool) {
         str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
     );
 }
+
+#[sqlx::test(fixtures("users"))]
+async fn test_connect(db: PgPool) {
+    let (app, state) = create_test_app(db.clone()).await;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let (lobby_1, _) = create_test_lobbies(
+        db,
+        state.clone(),
+        "alice",
+        "51b374f1-93ae-4c5c-89dd-611bda8412ce",
+    )
+    .await;
+
+    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+
+    let opt: Option<&AuthPayload> = None;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            format!(
+                "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce/connect?game_id={}&password={}",
+                lobby_1.id.to_string().as_str(),
+                "temp"
+            )
+            .as_str(),
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    assert_eq!(
+        state
+            .lobbies
+            .read()
+            .unwrap()
+            .get(&lobby_1.id)
+            .unwrap()
+            .receiver
+            .len(),
+        1
+    );
+}
+
+// #[sqlx::test(fixtures("users"))]
+// async fn test_disconnect(db: PgPool) {
+//     let (app, state) = create_test_app(db.clone()).await;
+
+//     let (auth, mut app) = authorize_admin(app).await;
+
+//     let (lobby_1, _) =
+//         create_test_lobbies(db, state.clone(), "alice", "51b374f1-93ae-4c5c-89dd-611bda8412ce").await;
+
+//     let opt: Option<&AuthPayload> = None;
+
+//     let response = app
+//         .ready()
+//         .await
+//         .unwrap()
+//         .call(build_request(
+//             "PUT",
+//             format!(
+//                 "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce/connect?game_id={}&password={}",
+//                 lobby_1.id.to_string().as_str(),
+//                 "temp"
+//             )
+//             .as_str(),
+//             opt,
+//             Some(&auth),
+//         ))
+//         .await
+//         .unwrap();
+
+//     assert_eq!(
+//         response.status(),
+//         StatusCode::OK,
+//         "{:?}",
+//         str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+//     );
+
+// }

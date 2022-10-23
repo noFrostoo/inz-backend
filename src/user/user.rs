@@ -34,6 +34,7 @@ pub struct UpdateUser {
 #[derive(Deserialize, Serialize)]
 pub struct ConnectUser {
     pub game_id: Uuid,
+    pub password: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -145,7 +146,8 @@ pub async fn connect_user(
     id: Uuid,
     tx: &mut Transaction<'_, Postgres>,
     state: Arc<State>,
-    game_id: Uuid,
+    params: ConnectUser,
+    check_pass: bool,
 ) -> Result<Uuid, AppError> {
     let user = get_user(id, &mut *tx).await?;
 
@@ -153,16 +155,17 @@ pub async fn connect_user(
         return Err(AppError::UserConnected(id.to_string()));
     }
 
-    let lobby = get_lobby_transaction(game_id, &mut *tx).await?;
+    print!("xdd {}", params.game_id);
+    let lobby = get_lobby_transaction(params.game_id, &mut *tx).await?;
 
     let count = sqlx::query_scalar!(
         // language=PostgreSQL
         r#"select count(*) from "user" where game_id = $1"#,
-        game_id
+        params.game_id
     )
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+    .map_err(|e| AppError::InternalServerError(format!("xd {}", e)))?;
 
     if count.is_some() && count.unwrap() >= lobby.max_players as i64 {
         return Err(AppError::LobbyFull("Looby full".to_string()));
@@ -171,14 +174,34 @@ pub async fn connect_user(
     event!(
         Level::DEBUG,
         "Lobby: {} not full, ready to connect user: {}",
-        game_id,
+        params.game_id,
         id
     );
+
+    //oh boy this is terrible
+    //TODO: refactor
+    if let Some(password) = lobby.password {
+        if check_pass {
+            if let Some(given_pass) = params.password {
+                if given_pass != password {
+                    return Err(AppError::WrongCredentials(format!(
+                        "bad pass for lobby: {}",
+                        lobby.name
+                    )));
+                }
+            } else {
+                return Err(AppError::WrongCredentials(format!(
+                    "pass required for lobby: {}",
+                    lobby.name
+                )));
+            }
+        }
+    }
 
     sqlx::query!(
         // language=PostgreSQL
         r#"update "user" set game_id = $1 where id = $2"#,
-        game_id,
+        params.game_id,
         id
     )
     .execute(&mut *tx)
@@ -188,12 +211,12 @@ pub async fn connect_user(
     let users = sqlx::query_as!(User,
         // language=PostgreSQL
         r#"select id, username, password, game_id, role as "role: UserRole" from "user" where game_id = $1 "#,
-        game_id
+        params.game_id
     )
     .fetch_all(&mut *tx)
     .await
     .map_err(|e| {
-        AppError::DbErr(e.to_string())
+        AppError::DbErr(format!("xd2 {}", e))
     })?;
 
     event!(
@@ -204,16 +227,16 @@ pub async fn connect_user(
 
     send_broadcast_msg(
         state,
-        game_id,
+        params.game_id,
         EventMessages::NewUserConnected(LobbyUserUpdate {
-            game_id,
+            game_id: params.game_id,
             user,
             users_count: users.len(),
             users,
         }),
     )?;
 
-    Ok(game_id)
+    Ok(params.game_id)
 }
 
 pub async fn lock_user_tables<'a, E>(db: E) -> Result<(), AppError>
@@ -222,7 +245,7 @@ where
 {
     event!(Level::DEBUG, "Locking users table");
 
-    sqlx::query!(r#"lock table "users" in ACCESS EXCLUSIVE MODE "#)
+    sqlx::query!(r#"lock table "user" in ACCESS EXCLUSIVE MODE "#)
         .execute(db)
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
@@ -265,7 +288,17 @@ pub async fn quick_connect(
         ));
     }
 
-    let game_id = connect_user(user.id, &mut *tx, state, lobby.id).await?;
+    let game_id = connect_user(
+        user.id,
+        &mut *tx,
+        state,
+        ConnectUser {
+            game_id: lobby.id,
+            password: None,
+        },
+        false,
+    )
+    .await?;
 
     Ok(game_id)
 }

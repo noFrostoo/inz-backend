@@ -9,7 +9,7 @@ create table "lobby"
     code_use_times  SMALLINT     not null,
     max_players     SMALLINT     not null,
     started         Boolean      not null,
-    owner_id        uuid  unique not null,
+    owner_id        uuid         not null,
     settings        jsonb        not null,
     events          jsonb        not null
 );

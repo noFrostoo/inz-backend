@@ -172,7 +172,7 @@ pub async fn connect_user_endpoint(
     let mut tx = db
         .begin()
         .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
+        .map_err(|e| AppError::DbErr(format!("xd3 {}", e)))?;
 
     event!(
         Level::INFO,
@@ -186,13 +186,13 @@ pub async fn connect_user_endpoint(
 
     event!(Level::DEBUG, "Tables locked");
 
-    let lobby_id = connect_user(id, &mut tx, state, params.game_id).await?;
+    let lobby_id = connect_user(id, &mut tx, state, params.0, true).await?;
 
     event!(Level::INFO, "User: {} connected, committing...", id);
 
     tx.commit()
         .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
+        .map_err(|e| AppError::DbErr(format!("xd5 {}", e)))?;
 
     Ok(Json(lobby_id))
 }
