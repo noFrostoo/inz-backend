@@ -15,7 +15,7 @@ use crate::{
     lobby::lobby::{get_lobby_players, send_broadcast_msg, LobbyUserUpdate},
     user::user::{
         connect_user, create_user, generate_password, generate_username, lock_lobby_tables,
-        lock_user_tables, quick_connect,
+        lock_user_tables, quick_connect, update_user_password,
     },
     websockets::EventMessages,
     State,
@@ -144,28 +144,20 @@ pub async fn update_user_endpoint(
         return Err(AppError::Unauthorized("Can't update a user".to_string()));
     }
 
-    let old = get_user(id, db).await?;
-
-    let mut password = old.password;
-    if let Some(new_password) = payload.password {
-        password = new_password;
-    }
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     event!(Level::DEBUG, "Updating a user: {}", id);
 
-    let updated = sqlx::query_as!(User,
-        // language=PostgreSQL
-        r#"update "user" set password = $1 where id = $2 returning id, username, password, game_id, role as "role: UserRole" "#,
-        password,
-        id
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| {
-        AppError::DbErr(e.to_string())
-    })?;
+    let updated = update_user_password(id, &mut tx, payload.password).await?;
 
     event!(Level::INFO, "Updated a user: {}", id);
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     Ok(Json(updated))
 }

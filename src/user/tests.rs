@@ -4,7 +4,7 @@ use axum::{
     Router,
 };
 use serde::Serialize;
-use sqlx::{PgPool};
+use sqlx::PgPool;
 use std::str;
 use std::{
     collections::HashMap,
@@ -16,103 +16,12 @@ use uuid::Uuid;
 
 use crate::{
     auth::{AuthBody, AuthPayload},
+    common_tests::{authorize_admin, authorize_user, build_request, create_test_app},
     create_app,
     entities::{User, UserRole},
-    user::user::CreateUser,
+    user::user::{CreateUser, UpdateUser},
     State,
 };
-
-async fn create_test_app(db: PgPool) -> (Router, Arc<State>) {
-    let state = Arc::new(State {
-        lobbies: RwLock::new(HashMap::new()),
-    });
-
-    (create_app(db, state.clone()), state)
-}
-
-async fn authorize_admin(mut app: Router) -> (AuthBody, Router) {
-    let response = app
-        .ready()
-        .await
-        .unwrap()
-        .call(build_request(
-            "POST",
-            "/authorize",
-            Some(&AuthPayload {
-                password: "alice".to_string(),
-                username: "alice".to_string(),
-            }),
-            None,
-        ))
-        .await
-        .unwrap();
-
-    (
-        serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
-            .unwrap(),
-        app,
-    )
-}
-
-async fn authorize_user(mut app: Router) -> (AuthBody, Router) {
-    let response = app
-        .ready()
-        .await
-        .unwrap()
-        .call(build_request(
-            "POST",
-            "/authorize",
-            Some(&AuthPayload {
-                password: "bob".to_string(),
-                username: "bob".to_string(),
-            }),
-            None,
-        ))
-        .await
-        .unwrap();
-
-    (
-        serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
-            .unwrap(),
-        app,
-    )
-}
-
-fn build_request<T>(
-    method: &str,
-    uri: &str,
-    body: Option<&T>,
-    auth: Option<&AuthBody>,
-) -> Request<Body>
-where
-    T: Serialize,
-{
-    let request_body = match body {
-        Some(s) => Body::from(serde_json::to_string(s).unwrap()),
-        None => Body::empty(),
-    };
-
-    let req = Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    let req = match auth {
-        Some(auth_body) => req.header(
-            "Authorization",
-            format!("Bearer {}", auth_body.access_token),
-        ),
-        None => req,
-    };
-
-    req.body(request_body).unwrap()
-}
-
-// async fn string_from_response(response : Response) -> String {
-//     String::from(
-//         str::from_utf8().unwrap(),
-//     )
-// }
 
 #[sqlx::test(fixtures("users"))]
 async fn test_hello_world(db: PgPool) {
@@ -378,4 +287,289 @@ async fn test_get_create(db: PgPool) {
             .unwrap();
 
     assert_eq!(resp_user, resp_user2)
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_get_create_bad_role(db: PgPool) {
+    let (app, _) = create_test_app(db).await;
+
+    let (auth, app) = authorize_user(app).await;
+
+    let response = app
+        .oneshot(build_request(
+            "POST",
+            "/users",
+            Some(&CreateUser {
+                password: "user".to_string(),
+                username: "user".to_string(),
+                role: UserRole::GameAdmin,
+            }),
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_get_delete(db: PgPool) {
+    let (app, _) = create_test_app(db).await;
+
+    let opt: Option<&AuthPayload> = None;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "DELETE",
+            "/users/c994b839-84f4-4509-ad49-59119133d6f5",
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "GET",
+            "/users/c994b839-84f4-4509-ad49-59119133d6f5",
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_get_delete_bad_role(db: PgPool) {
+    let (app, _) = create_test_app(db).await;
+
+    let opt: Option<&AuthPayload> = None;
+
+    let (auth, mut app) = authorize_user(app).await;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "DELETE",
+            "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce",
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "GET",
+            "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce",
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_get_delete_self(db: PgPool) {
+    let (app, _) = create_test_app(db).await;
+
+    let opt: Option<&AuthPayload> = None;
+
+    let (auth, mut app) = authorize_user(app).await;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "DELETE",
+            "/users/c994b839-84f4-4509-ad49-59119133d6f5",
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "GET",
+            "/users/c994b839-84f4-4509-ad49-59119133d6f5",
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_get_update_self(db: PgPool) {
+    let (app, _) = create_test_app(db).await;
+
+    let (auth, mut app) = authorize_user(app).await;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            "/users/c994b839-84f4-4509-ad49-59119133d6f5",
+            Some(&UpdateUser {
+                password: "bob2".to_string(),
+            }),
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "POST",
+            "/authorize",
+            Some(&AuthPayload {
+                password: "bob2".to_string(),
+                username: "bob".to_string(),
+            }),
+            None,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_get_update_not_self_as_user(db: PgPool) {
+    let (app, _) = create_test_app(db).await;
+
+    let (auth, mut app) = authorize_user(app).await;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce",
+            Some(&UpdateUser {
+                password: "bob2".to_string(),
+            }),
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_get_update_not_self_as_admin(db: PgPool) {
+    let (app, _) = create_test_app(db).await;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            "/users/c994b839-84f4-4509-ad49-59119133d6f5",
+            Some(&UpdateUser {
+                password: "bob2".to_string(),
+            }),
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
 }

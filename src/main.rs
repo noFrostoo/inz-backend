@@ -1,4 +1,5 @@
 mod auth;
+mod common_tests;
 mod entities;
 mod error;
 mod game;

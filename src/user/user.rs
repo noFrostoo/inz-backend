@@ -29,7 +29,7 @@ pub struct CreateUser {
 
 #[derive(Deserialize, Serialize)]
 pub struct UpdateUser {
-    pub password: Option<String>,
+    pub password: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -101,6 +101,29 @@ pub async fn create_user(
     event!(Level::INFO, "created user: {}", user.username);
 
     Ok(user)
+}
+
+pub async fn update_user_password(
+    id: Uuid,
+    tx: &mut Transaction<'_, Postgres>,
+    password: String,
+) -> Result<User, AppError> {
+    let argon2 = Argon2::default();
+    let salt = SaltString::generate(&mut OsRng);
+    let updated = sqlx::query_as!(User,
+        // language=PostgreSQL
+        r#"update "user" set password = $1 where id = $2 returning id, username, password, game_id, role as "role: UserRole" "#,
+        argon2.hash_password(password.as_bytes(), &salt).map_err(|e| {
+            AppError::InternalServerError(e.to_string()) //TODO: refactor error
+        })?.to_string(),
+        id
+    )
+    .fetch_one(tx)
+    .await
+    .map_err(|e| {
+        AppError::DbErr(e.to_string())
+    })?;
+    Ok(updated)
 }
 
 pub async fn get_user<'a, E>(id: Uuid, db: E) -> Result<User, AppError>
