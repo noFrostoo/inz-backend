@@ -155,7 +155,6 @@ pub async fn connect_user(
         return Err(AppError::UserConnected(id.to_string()));
     }
 
-    print!("xdd {}", params.game_id);
     let lobby = get_lobby_transaction(params.game_id, &mut *tx).await?;
 
     let count = sqlx::query_scalar!(
@@ -165,7 +164,7 @@ pub async fn connect_user(
     )
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| AppError::InternalServerError(format!("xd {}", e)))?;
+    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
 
     if count.is_some() && count.unwrap() >= lobby.max_players as i64 {
         return Err(AppError::LobbyFull("Looby full".to_string()));
@@ -287,6 +286,17 @@ pub async fn quick_connect(
             "Can't connect to lobby with this code".to_string(),
         ));
     }
+
+    sqlx::query_as!(
+        Lobby,
+        // language=PostgreSQL
+        r#"update "lobby" set code_use_times = $1 where id = $2 "#,
+        lobby.code_use_times - 1,
+        lobby.id
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| AppError::NotFound(e.to_string()))?;
 
     let game_id = connect_user(
         user.id,

@@ -130,8 +130,8 @@ pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
         .route("/users/:id/connect", put(connect_user_endpoint))
         .route("/users/:id/disconnect", put(disconnect_user_endpoint))
         .route("/users/me", get(get_me_endpoint))
-        .route("/users/me/quick_connect", put(quick_connect_endpoint))
-        .route("/users/quick_connect", put(quick_connect_endpoint_no_user))
+        .route("/users/quick_connect", put(quick_connect_endpoint))
+        .route("/quick_connect", put(quick_connect_endpoint_no_user))
         .route(
             "/lobby",
             post(create_lobby_endpoint).get(get_lobbies_endpoint),

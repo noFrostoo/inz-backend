@@ -40,7 +40,7 @@ impl AppError {
                 StatusCode::BAD_REQUEST,
                 format!("User connected to {}", s.clone()),
             ),
-            AppError::LobbyFull(s) => (StatusCode::NOT_MODIFIED, s.clone()), //TODO: good code ?
+            AppError::LobbyFull(s) => (StatusCode::BAD_REQUEST, s.clone()),
             AppError::InternalServerError(s) => (StatusCode::INTERNAL_SERVER_ERROR, s.clone()),
             AppError::WrongCredentials(s) => (
                 StatusCode::UNAUTHORIZED,

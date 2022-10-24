@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use crate::{
     auth::{Auth, AuthAdmin},
-    entities::{User, UserRole},
+    entities::{Lobby, User, UserRole},
     error::AppError,
-    lobby::lobby::{get_lobby_players, send_broadcast_msg, LobbyUserUpdate},
+    lobby::lobby::{get_lobby_players, get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
     user::user::{
         connect_user, create_user, generate_password, generate_username, lock_lobby_tables,
         lock_user_tables, quick_connect, update_user_password,
@@ -256,7 +256,7 @@ pub async fn quick_connect_endpoint(
     params: Query<QuickConnect>,
     Extension(state): Extension<Arc<State>>,
     auth: Auth,
-) -> Result<Json<Uuid>, AppError> {
+) -> Result<Json<Lobby>, AppError> {
     let mut tx = db
         .begin()
         .await
@@ -278,6 +278,8 @@ pub async fn quick_connect_endpoint(
 
     let lobby_id = quick_connect(&mut tx, &params.connect_code, state, user).await?;
 
+    let lobby = get_lobby_transaction(lobby_id, &mut tx).await?;
+
     event!(
         Level::INFO,
         "User: {}, quick connected, committing...",
@@ -288,14 +290,14 @@ pub async fn quick_connect_endpoint(
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    Ok(Json(lobby_id))
+    Ok(Json(lobby))
 }
 
 pub async fn quick_connect_endpoint_no_user(
     Extension(ref db): Extension<PgPool>,
     params: Query<QuickConnect>,
     Extension(state): Extension<Arc<State>>,
-) -> Result<Json<Uuid>, AppError> {
+) -> Result<Json<Lobby>, AppError> {
     let mut tx = db
         .begin()
         .await
@@ -366,9 +368,11 @@ pub async fn quick_connect_endpoint_no_user(
 
     let lobby_id = quick_connect(&mut tx, &params.connect_code, state, temp_usr).await?;
 
+    let lobby = get_lobby_transaction(lobby_id, &mut tx).await?;
+
     tx.commit()
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    Ok(Json(lobby_id))
+    Ok(Json(lobby))
 }

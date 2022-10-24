@@ -4,7 +4,7 @@ use axum::{
 };
 
 use sqlx::PgPool;
-use std::str;
+use std::{process::id, str};
 
 use tower::Service;
 use tower::ServiceExt;
@@ -577,7 +577,7 @@ async fn test_connect(db: PgPool) {
     let (auth, mut app) = authorize_admin(app).await;
 
     let (lobby_1, _) = create_test_lobbies(
-        db,
+        db.clone(),
         state.clone(),
         "alice",
         "51b374f1-93ae-4c5c-89dd-611bda8412ce",
@@ -624,6 +624,369 @@ async fn test_connect(db: PgPool) {
             .len(),
         1
     );
+
+    let count = sqlx::query_scalar!(
+        // language=PostgreSQL
+        r#"select count(*) from "user" where game_id = $1"#,
+        lobby_1.id
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_connect_no_pass(db: PgPool) {
+    let (app, state) = create_test_app(db.clone()).await;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let (lobby_1, _) = create_test_lobbies(
+        db,
+        state.clone(),
+        "alice",
+        "51b374f1-93ae-4c5c-89dd-611bda8412ce",
+    )
+    .await;
+
+    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+
+    let opt: Option<&AuthPayload> = None;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            format!(
+                "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce/connect?game_id={}",
+                lobby_1.id.to_string().as_str(),
+            )
+            .as_str(),
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_connect_max_user_limit(db: PgPool) {
+    let (app, state) = create_test_app(db.clone()).await;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let (lobby_1, _) = create_test_lobbies(
+        db.clone(),
+        state.clone(),
+        "alice",
+        "51b374f1-93ae-4c5c-89dd-611bda8412ce",
+    )
+    .await;
+
+    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+
+    let opt: Option<&AuthPayload> = None;
+
+    let ids_to_connect = vec![
+        "51b374f1-93ae-4c5c-89dd-611bda8412ce",
+        "c994b839-84f4-4509-ad49-59429133d6f5",
+        "b994b839-84f4-4509-ad49-59429133d6f5",
+        "d994b839-84f4-4509-ad49-59429133d6f5",
+    ];
+    let ids_len = ids_to_connect.len();
+
+    let mut count = 0;
+
+    for id in ids_to_connect {
+        let response = app
+            .ready()
+            .await
+            .unwrap()
+            .call(build_request(
+                "PUT",
+                format!(
+                    "/users/{}/connect?game_id={}&password={}",
+                    id,
+                    lobby_1.id.to_string().as_str(),
+                    "temp".to_string()
+                )
+                .as_str(),
+                opt,
+                Some(&auth),
+            ))
+            .await
+            .unwrap();
+
+        count += 1;
+
+        if count != ids_len {
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{:?}",
+                str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
+                    .unwrap()
+            );
+        } else {
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "{:?}",
+                str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
+                    .unwrap()
+            );
+        }
+    }
+
+    let count = sqlx::query_scalar!(
+        // language=PostgreSQL
+        r#"select count(*) from "user" where game_id = $1"#,
+        lobby_1.id
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(count, 3);
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_connect_user_connected(db: PgPool) {
+    let (app, state) = create_test_app(db.clone()).await;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let (lobby_1, _) = create_test_lobbies(
+        db,
+        state.clone(),
+        "alice",
+        "51b374f1-93ae-4c5c-89dd-611bda8412ce",
+    )
+    .await;
+
+    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+
+    let opt: Option<&AuthPayload> = None;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            format!(
+                "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce/connect?game_id={}&password={}",
+                lobby_1.id.to_string().as_str(),
+                "temp"
+            )
+            .as_str(),
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            format!(
+                "/users/51b374f1-93ae-4c5c-89dd-611bda8412ce/connect?game_id={}&password={}",
+                lobby_1.id.to_string().as_str(),
+                "temp"
+            )
+            .as_str(),
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_quick_connect(db: PgPool) {
+    let (app, state) = create_test_app(db.clone()).await;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let (_, mut lobby_2) = create_test_lobbies(
+        db.clone(),
+        state.clone(),
+        "alice",
+        "51b374f1-93ae-4c5c-89dd-611bda8412ce",
+    )
+    .await;
+
+    let opt: Option<&AuthPayload> = None;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            format!(
+                "/users/quick_connect?connect_code={}",
+                lobby_2.connect_code.clone().unwrap().to_string(),
+            )
+            .as_str(),
+            opt,
+            Some(&auth),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    lobby_2.code_use_times -= 1;
+
+    let lobby_response =
+        serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
+            .unwrap();
+
+    assert_eq!(lobby_2, lobby_response,);
+
+    assert_eq!(
+        state
+            .lobbies
+            .read()
+            .unwrap()
+            .get(&lobby_2.id)
+            .unwrap()
+            .receiver
+            .len(),
+        1
+    );
+
+    let count = sqlx::query_scalar!(
+        // language=PostgreSQL
+        r#"select count(*) from "user" where game_id = $1"#,
+        lobby_2.id
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(fixtures("users"))]
+async fn test_quick_connect_temp_user(db: PgPool) {
+    let (app, state) = create_test_app(db.clone()).await;
+
+    let (auth, mut app) = authorize_admin(app).await;
+
+    let (_, mut lobby_2) = create_test_lobbies(
+        db.clone(),
+        state.clone(),
+        "alice",
+        "51b374f1-93ae-4c5c-89dd-611bda8412ce",
+    )
+    .await;
+
+    let opt: Option<&AuthPayload> = None;
+
+    let response = app
+        .ready()
+        .await
+        .unwrap()
+        .call(build_request(
+            "PUT",
+            format!(
+                "/quick_connect?connect_code={}",
+                lobby_2.connect_code.clone().unwrap().to_string(),
+            )
+            .as_str(),
+            opt,
+            None,
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{:?}",
+        str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
+    );
+
+    lobby_2.code_use_times -= 1;
+
+    let lobby_response =
+        serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
+            .unwrap();
+
+    assert_eq!(lobby_2, lobby_response,);
+
+    assert_eq!(
+        state
+            .lobbies
+            .read()
+            .unwrap()
+            .get(&lobby_2.id)
+            .unwrap()
+            .receiver
+            .len(),
+        1
+    );
+
+    let count = sqlx::query_scalar!(
+        // language=PostgreSQL
+        r#"select count(*) from "user" where game_id = $1"#,
+        lobby_2.id
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(count, 1);
+
+    let count = sqlx::query_scalar!(
+        // language=PostgreSQL
+        r#"select count(*) from "user" "#,
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(count, 7);
 }
 
 // #[sqlx::test(fixtures("users"))]
