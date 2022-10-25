@@ -32,8 +32,6 @@ pub async fn create_lobby_endpoint(
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    //TODO: lock lobby table ?
-
     let lobby = create_lobby(&mut tx, payload, state, auth).await?;
 
     tx.commit()

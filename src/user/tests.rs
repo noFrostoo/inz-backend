@@ -4,19 +4,19 @@ use axum::{
 };
 
 use sqlx::PgPool;
-use std::{process::id, str};
+use std::str;
 
 use tower::Service;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 use crate::{
-    auth::{self, Auth, AuthPayload},
+    auth::AuthPayload,
     common_tests::{
         authorize_admin, authorize_user, build_request, create_test_app, create_test_lobbies,
     },
     entities::{User, UserRole},
-    user::user::{ConnectUser, CreateUser, UpdateUser},
+    user::user::{CreateUser, UpdateUser},
 };
 
 #[sqlx::test(fixtures("users"))]
@@ -909,7 +909,7 @@ async fn test_quick_connect(db: PgPool) {
 async fn test_quick_connect_temp_user(db: PgPool) {
     let (app, state) = create_test_app(db.clone()).await;
 
-    let (auth, mut app) = authorize_admin(app).await;
+    let (_, mut app) = authorize_admin(app).await;
 
     let (_, mut lobby_2) = create_test_lobbies(
         db.clone(),
@@ -989,6 +989,7 @@ async fn test_quick_connect_temp_user(db: PgPool) {
     assert_eq!(count, 7);
 }
 
+// TODO:
 // #[sqlx::test(fixtures("users"))]
 // async fn test_disconnect(db: PgPool) {
 //     let (app, state) = create_test_app(db.clone()).await;
