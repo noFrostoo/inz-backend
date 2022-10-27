@@ -17,6 +17,7 @@ use axum::{
     Router,
 };
 use axum_typed_websockets::WebSocketUpgrade;
+use lobby::lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint};
 use once_cell::sync::Lazy;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::{
@@ -34,12 +35,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::{
     auth::{authorize_endpoint, Keys},
-    lobby::{
-        lobby::get_lobbies_endpoint,
-        lobby_endpoints::{
-            create_lobby_endpoint, delete_lobby_endpoint, get_lobby_endpoint, start_game_endpoint,
-            update_lobby_endpoint,
-        },
+    lobby::lobby_endpoints::{
+        create_lobby_endpoint, delete_lobby_endpoint, get_lobby_endpoint, start_game_endpoint,
+        update_lobby_endpoint,
     },
     template::{create_lobby_from_template, create_template_from_lobby_endpoint},
     user::user_endpoints::{
@@ -143,6 +141,7 @@ pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
                 .put(update_lobby_endpoint),
         )
         .route("/lobby/:id/start", post(start_game_endpoint))
+        .route("/lobby/:id/stop", post(stop_game_endpoint))
         .route("/lobby/websocket", get(websocket_handler))
         .route(
             "/template",

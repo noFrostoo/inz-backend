@@ -125,8 +125,8 @@ pub async fn authorize_endpoint(
         username: user.username,
         user_id: user.id,
         // Mandatory expiry time as UTC timestamp
-        exp: 2000000000,
-        role: user.role, // May 2033
+        exp: 2000000000, // May 2033
+        role: user.role,
     };
 
     let token =

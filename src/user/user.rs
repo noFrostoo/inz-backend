@@ -225,7 +225,7 @@ pub async fn connect_user(
     );
 
     send_broadcast_msg(
-        state,
+        &state,
         params.game_id,
         EventMessages::NewUserConnected(LobbyUserUpdate {
             game_id: params.game_id,

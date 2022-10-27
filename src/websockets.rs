@@ -26,6 +26,8 @@ pub enum EventMessages {
     RoundEnd,
     RoundStart,
     GameEvent,
+    KickAll,
+    GameEnd,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +40,8 @@ pub enum ServerMessage {
     RoundStart,
     GameEvent,
     GameStart(LobbyUpdate),
+    KickAll,
+    GameEnd,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +114,8 @@ pub async fn process_message(
                 EventMessages::RoundEnd => todo!(),
                 EventMessages::RoundStart => todo!(),
                 EventMessages::GameEvent => todo!(),
+                EventMessages::KickAll => ServerMessage::KickAll,
+                EventMessages::GameEnd => ServerMessage::GameEnd,
             };
 
             if let Err(e) = sender.send(Message::Item(message)).await {

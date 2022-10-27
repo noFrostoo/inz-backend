@@ -1,25 +1,21 @@
 use std::sync::Arc;
 
-use axum::{
-    extract::{Extension, Query},
-    Json,
-};
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 use tokio::sync;
 use uuid::Uuid;
 
 use rand::Rng;
 
 use crate::{
-    auth::{Auth, AuthGameAdmin},
+    auth::AuthGameAdmin,
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     websockets::EventMessages,
     LobbyState, State,
 };
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct CreateLobby {
     pub name: String,
     pub password: Option<String>,
@@ -31,14 +27,14 @@ pub struct CreateLobby {
     pub events: Option<GameEvents>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub enum LobbiesType {
     Public,
     Private,
     All,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct LobbiesQuery {
     pub lobby_type: LobbiesType,
 }
@@ -229,33 +225,6 @@ pub async fn get_lobby_players(
     Ok(players)
 }
 
-pub async fn get_lobbies_endpoint(
-    Extension(ref db): Extension<PgPool>,
-    Query(lobby_query): Query<LobbiesQuery>,
-    _auth: Auth,
-) -> Result<Json<Vec<Lobby>>, AppError> {
-    let mut builder = QueryBuilder::new("select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as \"settings: sqlx::types::Json<Settings>\", events as \"events: sqlx::types::Json<GameEvent>\" from \"lobby\" ");
-
-    match lobby_query.lobby_type {
-        LobbiesType::Public => {
-            builder.push("where public = $1").push_bind(true);
-        }
-        LobbiesType::Private => {
-            builder.push("where public = $1").push_bind(false);
-        }
-        LobbiesType::All => {}
-    }
-
-    let query = builder.build_query_as::<Lobby>();
-
-    let lobbies = query
-        .fetch_all(db)
-        .await
-        .map_err(|e| AppError::NotFound(e.to_string()))?;
-
-    Ok(Json(lobbies))
-}
-
 pub async fn update_lobby(
     id: Uuid,
     tx: &mut Transaction<'_, Postgres>,
@@ -313,7 +282,7 @@ pub async fn update_lobby(
     let lobby = get_lobby_response(id, &mut *tx).await?;
 
     send_broadcast_msg(
-        state,
+        &state,
         id,
         EventMessages::LobbyUpdate(LobbyUpdate {
             id,
@@ -325,7 +294,11 @@ pub async fn update_lobby(
     Ok(lobby)
 }
 
-pub fn send_broadcast_msg(state: Arc<State>, id: Uuid, msg: EventMessages) -> Result<(), AppError> {
+pub fn send_broadcast_msg(
+    state: &Arc<State>,
+    id: Uuid,
+    msg: EventMessages,
+) -> Result<(), AppError> {
     match state.lobbies.read() {
         Ok(ctx) => match ctx.get(&id) {
             Some(lobby_state) => {

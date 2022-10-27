@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Extension, Path},
+    extract::{Extension, Path, Query},
     Json,
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use crate::{
@@ -18,7 +18,8 @@ use crate::{
 
 use super::lobby::{
     create_lobby, get_lobby, get_lobby_players, get_lobby_response, get_lobby_transaction,
-    send_broadcast_msg, update_lobby, CreateLobby, LobbyResponse, LobbyUpdate,
+    send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse,
+    LobbyUpdate,
 };
 
 pub async fn create_lobby_endpoint(
@@ -60,9 +61,39 @@ pub async fn get_lobby_endpoint(
     Ok(Json(response))
 }
 
+pub async fn get_lobbies_endpoint(
+    Extension(ref db): Extension<PgPool>,
+    Query(lobby_query): Query<LobbiesQuery>,
+    _auth: Auth,
+) -> Result<Json<Vec<Lobby>>, AppError> {
+    let mut builder = QueryBuilder::new("select * from \"lobby\" ");
+
+    match lobby_query.lobby_type {
+        LobbiesType::Public => {
+            builder.push("where public = true");
+        }
+        LobbiesType::Private => {
+            builder.push("where public = false");
+        }
+        LobbiesType::All => {}
+    }
+
+    print!("{}", builder.sql());
+
+    let query = builder.build_query_as::<Lobby>();
+
+    let lobbies = query
+        .fetch_all(db)
+        .await
+        .map_err(|e| AppError::NotFound(e.to_string()))?;
+
+    Ok(Json(lobbies))
+}
+
 pub async fn delete_lobby_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
+    Extension(state): Extension<Arc<State>>,
     auth: Auth,
 ) -> Result<(), AppError> {
     let mut tx = db
@@ -80,14 +111,11 @@ pub async fn delete_lobby_endpoint(
         ));
     }
 
-    sqlx::query!(
-        // language=PostgreSQL
-        r#"delete from "lobby" where id = $1 "#,
-        id
-    )
-    .execute(&mut tx)
-    .await
-    .map_err(|e| AppError::DbErr(e.to_string()))?;
+    if lobby.started {
+        send_broadcast_msg(&state, id, EventMessages::GameEnd)?;
+    }
+    // just to be sure
+    send_broadcast_msg(&state, id, EventMessages::KickAll)?;
 
     sqlx::query!(
         // language=PostgreSQL
@@ -97,6 +125,22 @@ pub async fn delete_lobby_endpoint(
     .execute(&mut tx)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    sqlx::query!(
+        // language=PostgreSQL
+        r#"delete from "lobby" where id = $1 "#,
+        id
+    )
+    .execute(&mut tx)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    match state.lobbies.write() {
+        Ok(mut wg) => {
+            wg.remove(&id);
+        }
+        Err(e) => return Err(AppError::InternalServerError(e.to_string())),
+    }
 
     tx.commit()
         .await
@@ -160,7 +204,7 @@ pub async fn start_game_endpoint(
     let players = get_lobby_players(id, &mut tx).await?;
 
     send_broadcast_msg(
-        state,
+        &state,
         id,
         EventMessages::GameStart(LobbyUpdate {
             id,
@@ -168,6 +212,44 @@ pub async fn start_game_endpoint(
             lobby,
         }),
     )?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    Ok(())
+}
+
+pub async fn stop_game_endpoint(
+    Path(id): Path<Uuid>,
+    Extension(ref db): Extension<PgPool>,
+    Extension(state): Extension<Arc<State>>,
+    _auth: AuthGameAdmin,
+) -> Result<(), AppError> {
+    let lobby = get_lobby(id, db).await?;
+
+    if !lobby.started {
+        return Err(AppError::GameStarted(lobby.name));
+    }
+
+    let mut tx = db
+        .begin()
+        .await
+        .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    lock_lobby_tables(&mut tx).await?;
+
+    sqlx::query!(
+        // language=PostgreSQL
+        r#"update "lobby" set started = $1 where id = $2 "#,
+        false,
+        id
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    send_broadcast_msg(&state, id, EventMessages::GameEnd)?;
 
     tx.commit()
         .await

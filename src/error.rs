@@ -26,6 +26,7 @@ pub enum AppError {
     Unauthorized(String),
     BadRequest(String),
     GameStarted(String),
+    GameNotStarted(String),
     EmptyData(String),
 }
 
@@ -62,6 +63,9 @@ impl AppError {
             ),
             AppError::NotConnected => (StatusCode::BAD_REQUEST, "User Not connected".to_string()),
             AppError::EmptyData(s) => (StatusCode::BAD_REQUEST, format!("Empty data: {}", s)),
+            AppError::GameNotStarted(s) => {
+                (StatusCode::BAD_REQUEST, format!("game not started: {}", s))
+            }
         }
     }
 }
