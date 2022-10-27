@@ -82,7 +82,7 @@ pub async fn create_lobby(
         None => Settings::default(),
     };
 
-    let events = GameEvents {};
+    let events = GameEvents::new();
 
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
@@ -118,6 +118,8 @@ pub async fn create_lobby(
                         LobbyState {
                             sender: Arc::new(tx),
                             receiver: Arc::new(rx),
+                            started: false,
+                            round_state: crate::RoundState::new(),
                         },
                     );
                 }

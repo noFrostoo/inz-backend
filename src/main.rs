@@ -3,7 +3,6 @@ mod auth;
 mod common_tests;
 mod entities;
 mod error;
-mod game;
 mod lobby;
 mod template;
 mod user;
@@ -56,6 +55,18 @@ use crate::template::{
 pub struct LobbyState {
     sender: Arc<sync::broadcast::Sender<EventMessages>>,
     receiver: Arc<sync::broadcast::Receiver<EventMessages>>,
+    started: bool,
+    round_state: RoundState
+}
+
+pub struct RoundState {
+    round: i64,
+    players: i64,
+    players_finished: i64
+}
+
+impl RoundState {
+    pub fn new() -> Self { Self { round: 0, players: 0, players_finished: 0 } }
 }
 
 pub struct State {

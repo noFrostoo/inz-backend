@@ -157,6 +157,10 @@ pub async fn connect_user(
 
     let lobby = get_lobby_transaction(params.game_id, &mut *tx).await?;
 
+    if lobby.started {
+        return Err(AppError::GameStarted(lobby.name));
+    }
+
     let count = sqlx::query_scalar!(
         // language=PostgreSQL
         r#"select count(*) from "user" where game_id = $1"#,

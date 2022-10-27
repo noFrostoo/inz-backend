@@ -120,7 +120,7 @@ pub async fn create_test_lobbies(
         code_use_times: 0,
         max_players: 3,
         settings: Some(Settings::default()),
-        events: Some(GameEvents {}),
+        events: Some(GameEvents::new()),
     };
 
     let lobby_1 = create_lobby(
@@ -145,7 +145,7 @@ pub async fn create_test_lobbies(
         code_use_times: 2,
         max_players: 3,
         settings: Some(Settings::default()),
-        events: Some(GameEvents {}),
+        events: Some(GameEvents::new()),
     };
 
     let lobby_2 = create_lobby(

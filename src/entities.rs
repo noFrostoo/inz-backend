@@ -7,7 +7,7 @@ use sqlx::{
 };
 
 #[derive(sqlx::Type, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[sqlx(type_name = "user_role")] // only for PostgreSQL to match a type definition
+#[sqlx(type_name = "user_role")] 
 #[sqlx(rename_all = "lowercase")]
 pub enum UserRole {
     User,
@@ -55,10 +55,62 @@ pub struct Settings {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct GameEvents {}
+pub struct GameEvents {
+    events: Vec<GameEvent>
+}
+
+impl GameEvents {
+    pub fn new() -> Self { Self { events: Vec::new() } }
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct Game {}
+pub struct GameEvent {
+    condition: EventCondition,
+    actions: Vec<EventAction>,
+    run_once: bool
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum EventCondition {
+    RoundMet{round: i64},
+    ValueExceed{resource: Resource, met_by:MetBy},
+    SingleChange{resource: Resource, value: i64},
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum Resource {
+    Money,
+    MagazineState,
+    Performance,
+    BackOrderValue,
+    BackOrder,
+    UserOrder,
+    ReceivedOrder
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum EventAction {
+    ShowMessage{message: String},
+    ChangeSettings{new_settings: Settings},
+    AddResource{resource: Resource, target: ActionTarget}
+}
+
+//TODO: refactor name
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum MetBy {
+    SinglePlayer,
+    PlayerPercent(i64),
+    Average,
+    AllPlayers
+}
+
+//TODO: refactor name
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum ActionTarget {
+    EventTarget,
+    AllPlayers,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct GameState {
