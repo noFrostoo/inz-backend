@@ -45,6 +45,8 @@ pub struct Settings {
     pub order_queue: i16,
     pub resource_price: i64,
     pub start_money: i64,
+    pub start_magazine: i64,
+    pub start_order: Order,
     pub play_time: i64,
     pub round_time: i64,
     pub demand_style: String,
@@ -117,10 +119,10 @@ pub struct GameState {
     pub id: Uuid,
     pub round: i64,
     pub user_states: Json<BTreeMap<Uuid, UserState>>,
-    pub orders: Json<BTreeMap<Uuid, Order>>,
+    pub round_orders: Json<BTreeMap<Uuid, Order>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Order {
     pub recipient: Uuid,
     pub sender: Uuid,
