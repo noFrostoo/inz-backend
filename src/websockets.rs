@@ -7,7 +7,10 @@ use sqlx::PgPool;
 use crate::{
     auth::Auth,
     error::AppError,
-    lobby::lobby::{LobbyUpdate, LobbyUserUpdate},
+    lobby::{
+        game::GameUpdate,
+        lobby::{LobbyUpdate, LobbyUserUpdate},
+    },
     user::user::get_user,
     State,
 };
@@ -22,7 +25,7 @@ pub enum EventMessages {
     NewUserConnected(LobbyUserUpdate),
     LobbyUpdate(LobbyUpdate),
     UserDisconnected(LobbyUserUpdate),
-    GameStart(LobbyUpdate),
+    GameStart(GameUpdate),
     RoundEnd,
     RoundStart,
     GameEvent,
@@ -39,7 +42,7 @@ pub enum ServerMessage {
     RoundEnd,
     RoundStart,
     GameEvent,
-    GameStart(LobbyUpdate),
+    GameStart(GameUpdate),
     KickAll,
     GameEnd,
 }
@@ -110,7 +113,13 @@ pub async fn process_message(
                 EventMessages::NewUserConnected(l) => ServerMessage::NewUserConnected(l),
                 EventMessages::LobbyUpdate(u) => ServerMessage::LobbyUpdate(u),
                 EventMessages::UserDisconnected(l) => ServerMessage::UserDisconnected(l),
-                EventMessages::GameStart(u) => ServerMessage::GameStart(u),
+                EventMessages::GameStart(u) => {
+                    if u.recipient != user.id {
+                        continue;
+                    }
+
+                    ServerMessage::GameStart(u)
+                }
                 EventMessages::RoundEnd => todo!(),
                 EventMessages::RoundStart => todo!(),
                 EventMessages::GameEvent => todo!(),

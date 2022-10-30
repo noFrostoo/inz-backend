@@ -620,7 +620,7 @@ async fn test_connect(db: PgPool) {
             .unwrap()
             .get(&lobby_1.id)
             .unwrap()
-            .receiver
+            ._receiver
             .len(),
         1
     );
@@ -887,7 +887,7 @@ async fn test_quick_connect(db: PgPool) {
             .unwrap()
             .get(&lobby_2.id)
             .unwrap()
-            .receiver
+            ._receiver
             .len(),
         1
     );
@@ -960,7 +960,7 @@ async fn test_quick_connect_temp_user(db: PgPool) {
             .unwrap()
             .get(&lobby_2.id)
             .unwrap()
-            .receiver
+            ._receiver
             .len(),
         1
     );

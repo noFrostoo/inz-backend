@@ -16,11 +16,12 @@ use axum::{
     Router,
 };
 use axum_typed_websockets::WebSocketUpgrade;
+use entities::{Flow, Order, Settings, UserState};
 use lobby::lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint};
 use once_cell::sync::Lazy;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     env,
     net::SocketAddr,
     sync::{Arc, RwLock},
@@ -54,19 +55,35 @@ use crate::template::{
 
 pub struct LobbyState {
     sender: Arc<sync::broadcast::Sender<EventMessages>>,
-    receiver: Arc<sync::broadcast::Receiver<EventMessages>>,
+    _receiver: Arc<sync::broadcast::Receiver<EventMessages>>,
     started: bool,
-    round_state: RoundState
+    round_state: RoundState,
 }
 
 pub struct RoundState {
     round: i64,
     players: i64,
-    players_finished: i64
+    players_finished: i64,
+    users_states: BTreeMap<Uuid, UserState>,
+    round_orders: BTreeMap<Uuid, Order>,
+    settings: Settings,
+    flow: Flow,
+    demand: i64,
 }
 
 impl RoundState {
-    pub fn new() -> Self { Self { round: 0, players: 0, players_finished: 0 } }
+    pub fn new() -> Self {
+        Self {
+            round: 0,
+            players: 0,
+            players_finished: 0,
+            users_states: BTreeMap::new(),
+            round_orders: BTreeMap::new(),
+            settings: Settings::default(),
+            flow: Flow::default(),
+            demand: 0,
+        }
+    }
 }
 
 pub struct State {

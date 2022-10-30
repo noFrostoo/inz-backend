@@ -117,7 +117,7 @@ pub async fn create_lobby(
                         lobby.id,
                         LobbyState {
                             sender: Arc::new(tx),
-                            receiver: Arc::new(rx),
+                            _receiver: Arc::new(rx),
                             started: false,
                             round_state: crate::RoundState::new(),
                         },

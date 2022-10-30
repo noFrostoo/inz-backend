@@ -16,11 +16,13 @@ use crate::{
     State,
 };
 
-use super::{lobby::{
-    create_lobby, get_lobby, get_lobby_players, get_lobby_response, get_lobby_transaction,
-    send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse,
-    LobbyUpdate,
-}, game::start_game};
+use super::{
+    game::start_game,
+    lobby::{
+        create_lobby, get_lobby, get_lobby_players, get_lobby_response, get_lobby_transaction,
+        send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse,
+    },
+};
 
 pub async fn create_lobby_endpoint(
     Extension(ref db): Extension<PgPool>,
@@ -203,7 +205,7 @@ pub async fn start_game_endpoint(
 
     let players = get_lobby_players(id, &mut tx).await?;
 
-    start_game(&mut tx, id, lobby, players, &state).await;
+    start_game(&mut tx, id, lobby, players, &state).await?;
 
     tx.commit()
         .await
