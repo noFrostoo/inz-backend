@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, default};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use sqlx::{
@@ -71,11 +71,14 @@ pub enum DemandStyle {
         power: i64,
         modulator: i64,
     },
+    List {
+        demand: Vec<i64>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct GameEvents {
-    events: Vec<GameEvent>,
+    pub events: Vec<GameEvent>,
 }
 
 impl GameEvents {
@@ -86,16 +89,26 @@ impl GameEvents {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct GameEvent {
-    condition: EventCondition,
-    actions: Vec<EventAction>,
-    run_once: bool,
+    pub condition: EventCondition,
+    pub actions: Vec<EventAction>,
+    pub recipients: EventsRecipients,
+    pub run_once: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum EventCondition {
-    RoundMet { round: i64 },
-    ValueExceed { resource: Resource, met_by: MetBy },
-    SingleChange { resource: Resource, value: i64 },
+    RoundMet {
+        round: i64,
+    },
+    ValueExceed {
+        resource: Resource,
+        met_by: MetBy,
+        value: i64,
+    },
+    SingleChange {
+        resource: Resource,
+        value: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -104,9 +117,6 @@ pub enum Resource {
     MagazineState,
     Performance,
     BackOrderValue,
-    BackOrder,
-    UserOrder,
-    ReceivedOrder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
@@ -120,6 +130,7 @@ pub enum EventAction {
     AddResource {
         resource: Resource,
         target: ActionTarget,
+        value: i64,
     },
 }
 
@@ -127,8 +138,15 @@ pub enum EventAction {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum MetBy {
     SinglePlayer,
-    PlayerPercent(i64),
+    PlayerPercent(usize),
     Average,
+    AllPlayers,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub enum EventsRecipients {
+    SinglePlayer, //not possible to use with
+    PlayerMetConditions,
     AllPlayers,
 }
 
@@ -148,6 +166,7 @@ pub struct GameState {
     pub send_orders: Json<BTreeMap<Uuid, Order>>,
     pub flow: Json<Flow>,
     pub demand: i64,
+    pub game_id: Uuid,
 }
 
 #[derive(Clone, Debug, PartialEq, Default, Eq, Serialize, Deserialize, Hash)]
@@ -174,6 +193,7 @@ pub struct UserState {
     pub back_order_sum: i64,
     pub incoming_orders: Vec<Order>,
     pub requested_orders: Vec<Order>,
+    pub sent_orders: Vec<Order>,
     pub placed_order: Order,
 }
 

@@ -20,7 +20,7 @@ use crate::{
 
 pub async fn create_test_app(db: PgPool) -> (Router, Arc<State>) {
     let state = Arc::new(State {
-        lobbies: RwLock::new(HashMap::new()),
+        lobbies: tokio::sync::RwLock::new(HashMap::new()),
     });
 
     (create_app(db, state.clone()), state)

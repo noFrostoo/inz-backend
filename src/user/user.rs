@@ -237,7 +237,8 @@ pub async fn connect_user(
             users_count: users.len(),
             users,
         }),
-    )?;
+    )
+    .await?;
 
     Ok(params.game_id)
 }

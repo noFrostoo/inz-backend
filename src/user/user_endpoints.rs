@@ -240,7 +240,8 @@ pub async fn disconnect_user_endpoint(
             users_count: users.len(),
             users,
         }),
-    )?;
+    )
+    .await?;
 
     event!(Level::DEBUG, "Disconnected user: {}, committing...", id);
 

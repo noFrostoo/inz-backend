@@ -181,12 +181,7 @@ async fn test_create_lobby(db: PgPool) {
 
     assert_eq!(lobby, returned_lobby);
 
-    assert!(state
-        .lobbies
-        .read()
-        .unwrap()
-        .get(&returned_lobby.id)
-        .is_some())
+    assert!(state.lobbies.read().await.get(&returned_lobby.id).is_some())
 }
 
 #[sqlx::test(fixtures("users"))]
@@ -354,5 +349,5 @@ async fn test_delete_lobby(db: PgPool) {
 
     assert_eq!(lobbies.len(), 1);
 
-    assert_eq!(state.lobbies.read().unwrap().len(), 1);
+    assert_eq!(state.lobbies.read().await.len(), 1);
 }

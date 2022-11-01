@@ -28,6 +28,7 @@ pub enum AppError {
     GameStarted(String),
     GameNotStarted(String),
     EmptyData(String),
+    BadOrder(String),
 }
 
 impl AppError {
@@ -66,6 +67,7 @@ impl AppError {
             AppError::GameNotStarted(s) => {
                 (StatusCode::BAD_REQUEST, format!("game not started: {}", s))
             }
+            AppError::BadOrder(s) => (StatusCode::BAD_REQUEST, format!("Bad error: {}", s)),
         }
     }
 }

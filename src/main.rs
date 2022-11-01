@@ -29,7 +29,7 @@ use std::{
 use tokio::sync;
 use tower::ServiceBuilder;
 use uuid::Uuid;
-use websockets::{process_message, ClientMessage, EventMessages, ServerMessage};
+use websockets::{game_process, ClientMessage, EventMessages, ServerMessage};
 
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -66,6 +66,7 @@ pub struct RoundState {
     players_finished: i64,
     users_states: BTreeMap<Uuid, UserState>,
     round_orders: BTreeMap<Uuid, Order>,
+    send_orders: BTreeMap<Uuid, Order>,
     settings: Settings,
     flow: Flow,
     demand: i64,
@@ -79,6 +80,7 @@ impl RoundState {
             players_finished: 0,
             users_states: BTreeMap::new(),
             round_orders: BTreeMap::new(),
+            send_orders: BTreeMap::new(),
             settings: Settings::default(),
             flow: Flow::default(),
             demand: 0,
@@ -87,7 +89,7 @@ impl RoundState {
 }
 
 pub struct State {
-    lobbies: RwLock<HashMap<Uuid, LobbyState>>,
+    lobbies: tokio::sync::RwLock<HashMap<Uuid, LobbyState>>,
 }
 
 static KEYS: Lazy<Keys> = Lazy::new(|| {
@@ -115,7 +117,7 @@ async fn main() {
     sqlx::migrate!().run(&db).await.unwrap();
 
     let state = Arc::new(State {
-        lobbies: RwLock::new(HashMap::new()),
+        lobbies: tokio::sync::RwLock::new(HashMap::new()),
     });
 
     let app = create_app(db, state);
@@ -140,7 +142,7 @@ async fn websocket_handler(
     auth: Auth,
 ) -> impl IntoResponse {
     let db_clone = db.clone();
-    ws.on_upgrade(|socket| process_message(socket, state, db_clone, auth))
+    ws.on_upgrade(|socket| game_process(socket, state, db_clone, auth))
 }
 
 pub fn create_app(db: PgPool, state: Arc<State>) -> Router {

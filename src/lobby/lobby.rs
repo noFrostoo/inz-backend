@@ -104,31 +104,20 @@ pub async fn create_lobby(
         AppError::DbErr(e.to_string())
     })?;
 
-    match state.lobbies.write() {
-        Ok(mut ctx) => {
-            match ctx.get(&lobby.id) {
-                Some(_) => {
-                    return Err(AppError::NotFound("Looby already created".to_string()));
-                }
-                None => {
-                    //TODO: fix magic number
-                    let (tx, rx) = sync::broadcast::channel(33);
-                    ctx.insert(
-                        lobby.id,
-                        LobbyState {
-                            sender: Arc::new(tx),
-                            _receiver: Arc::new(rx),
-                            started: false,
-                            round_state: crate::RoundState::new(),
-                        },
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            return Err(AppError::InternalServerError(e.to_string()));
-        }
+    if let Some(_) = state.lobbies.read().await.get(&lobby.id) {
+        return Err(AppError::NotFound("Looby already created".to_string()));
     }
+
+    let (tx, rx) = sync::broadcast::channel(33);
+    state.lobbies.write().await.insert(
+        lobby.id,
+        LobbyState {
+            sender: Arc::new(tx),
+            _receiver: Arc::new(rx),
+            started: false,
+            round_state: crate::RoundState::new(),
+        },
+    );
 
     Ok(lobby)
 }
@@ -291,32 +280,29 @@ pub async fn update_lobby(
             users: lobby.players.clone(),
             lobby: lobby.lobby.clone(),
         }),
-    )?;
+    )
+    .await?;
 
     Ok(lobby)
 }
 
-pub fn send_broadcast_msg(
+pub async fn send_broadcast_msg(
     state: &Arc<State>,
     id: Uuid,
     msg: EventMessages,
 ) -> Result<(), AppError> {
-    match state.lobbies.read() {
-        Ok(ctx) => match ctx.get(&id) {
-            Some(lobby_state) => {
-                lobby_state
-                    .sender
-                    .send(msg)
-                    .map_err(|e| AppError::InternalServerError(e.to_string()))?;
-            }
-            None => {
-                return Err(AppError::InternalServerError("Looby not found".to_string()));
-            }
-        },
-        Err(e) => {
-            return Err(AppError::InternalServerError(e.to_string()));
+    match state.lobbies.read().await.get(&id) {
+        Some(lobby_state) => {
+            lobby_state
+                .sender
+                .send(msg)
+                .map_err(|e| AppError::InternalServerError(e.to_string()))?;
+        }
+        None => {
+            return Err(AppError::InternalServerError("Looby not found".to_string()));
         }
     };
+
     Ok(())
 }
 

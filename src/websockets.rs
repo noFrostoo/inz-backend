@@ -3,13 +3,15 @@ use std::{borrow::BorrowMut, sync::Arc};
 use axum_typed_websockets::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::{
     auth::Auth,
+    entities::Settings,
     error::AppError,
     lobby::{
-        game::GameUpdate,
-        lobby::{LobbyUpdate, LobbyUserUpdate},
+        game::{process_user_round_end_message, GameUpdate, UserEndRound},
+        lobby::{send_broadcast_msg, LobbyUpdate, LobbyUserUpdate},
     },
     user::user::get_user,
     State,
@@ -26,11 +28,17 @@ pub enum EventMessages {
     LobbyUpdate(LobbyUpdate),
     UserDisconnected(LobbyUserUpdate),
     GameStart(GameUpdate),
+    SettingsChangeGameEvent(Settings),
+    ResourceAddedAll(String, i64),
+    ResourceAddedUser(Uuid, String, i64),
     RoundEnd,
     RoundStart,
     GameEvent,
     KickAll,
     GameEnd,
+    Ack(Uuid),
+    ErrorUser(Uuid, AppError),
+    Error(AppError),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,18 +47,21 @@ pub enum ServerMessage {
     UserDisconnected(LobbyUserUpdate),
     LobbyUpdate(LobbyUpdate),
     Error(AppError),
+    ResourceAdded(String, i64),
     RoundEnd,
     RoundStart,
     GameEvent,
     GameStart(GameUpdate),
+    SettingsChangeGameEvent(Settings),
     KickAll,
     GameEnd,
+    Ack,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMessage {
     Error(String), //TODO:
-    RoundEnd,
+    RoundEnd(UserEndRound),
 }
 
 async fn send_err(
@@ -62,17 +73,18 @@ async fn send_err(
     }
 }
 
-pub async fn process_message(
+pub async fn game_process(
     socket: WebSocket<ServerMessage, ClientMessage>,
     state: Arc<State>,
-    ref db: PgPool,
+    db: PgPool,
     auth: Auth,
 ) {
     let (mut sender, mut receiver) = socket.split();
     let tx;
     let mut rx;
+    let db = db;
 
-    let user = match get_user(auth.user_id, db).await {
+    let user = match get_user(auth.user_id, &db).await {
         Ok(u) => u,
         Err(e) => {
             send_err(
@@ -96,15 +108,12 @@ pub async fn process_message(
         }
     };
 
-    match state.lobbies.read() {
-        Ok(lobbies) => match lobbies.get(&game_id) {
-            Some(lobby_state) => {
-                tx = lobby_state.sender.clone();
-                rx = tx.subscribe();
-            }
-            None => todo!(),
-        },
-        Err(_) => todo!(),
+    match state.lobbies.read().await.get(&game_id) {
+        Some(lobby_state) => {
+            tx = lobby_state.sender.clone();
+            rx = tx.subscribe();
+        }
+        None => todo!(),
     }
 
     let mut send_task = tokio::spawn(async move {
@@ -125,24 +134,63 @@ pub async fn process_message(
                 EventMessages::GameEvent => todo!(),
                 EventMessages::KickAll => ServerMessage::KickAll,
                 EventMessages::GameEnd => ServerMessage::GameEnd,
+                EventMessages::Ack(id) => {
+                    if id != user.id {
+                        continue;
+                    }
+
+                    ServerMessage::Ack
+                }
+                EventMessages::ErrorUser(id, e) => {
+                    if id != user.id {
+                        continue;
+                    }
+                    ServerMessage::Error(e)
+                }
+                EventMessages::Error(e) => ServerMessage::Error(e),
+                EventMessages::SettingsChangeGameEvent(s) => {
+                    ServerMessage::SettingsChangeGameEvent(s)
+                }
+                EventMessages::ResourceAddedAll(s, v) => ServerMessage::ResourceAdded(s, v),
+                EventMessages::ResourceAddedUser(id, s, v) => {
+                    if id != user.id {
+                        continue;
+                    }
+                    ServerMessage::ResourceAdded(s, v)
+                }
             };
 
-            if let Err(e) = sender.send(Message::Item(message)).await {
-                send_err(
-                    sender.borrow_mut(),
-                    AppError::InternalServerError(e.to_string()),
-                )
-                .await;
-            }
+            send_msg(&mut sender, message).await;
         }
     });
 
     let mut recv_task = tokio::spawn(async move {
         while let Some(result_msg) = receiver.next().await {
             match result_msg {
-                Ok(_) => todo!(),
+                Ok(msg) => match msg {
+                    Message::Item(i) => {
+                        match process_user_msg(game_id, user.id, i, &state, &db).await {
+                            Ok(_) => todo!(),
+                            Err(e) => {
+                                let res = send_broadcast_msg(
+                                    &state,
+                                    game_id,
+                                    EventMessages::ErrorUser(user.id, e),
+                                )
+                                .await;
+
+                                if let Err(e) = res {
+                                    tracing::error!("cos sie zesralo");
+                                }
+                            }
+                        };
+                    }
+                    Message::Ping(_) => todo!(),
+                    Message::Pong(_) => todo!(),
+                    Message::Close(_) => todo!(),
+                },
                 Err(e) => {
-                    tracing::error!("error while receiving client  {}", e.to_string())
+                    tracing::error!("error while receiving client  {}", e.to_string());
                 }
             }
         }
@@ -154,4 +202,32 @@ pub async fn process_message(
     };
 
     //TODO: how to do disconnect ????
+}
+
+async fn send_msg(
+    sender: &mut SplitSink<WebSocket<ServerMessage, ClientMessage>, Message<ServerMessage>>,
+    message: ServerMessage,
+) {
+    if let Err(e) = sender.send(Message::Item(message)).await {
+        send_err(
+            sender.borrow_mut(),
+            AppError::InternalServerError(e.to_string()),
+        )
+        .await;
+    }
+}
+
+async fn process_user_msg(
+    game_id: Uuid,
+    player: Uuid,
+    msg: ClientMessage,
+    state: &Arc<State>,
+    db: &PgPool,
+) -> Result<(), AppError> {
+    match msg {
+        ClientMessage::Error(_) => todo!(),
+        ClientMessage::RoundEnd(m) => {
+            process_user_round_end_message(game_id, player, m, state.clone(), db).await
+        }
+    }
 }

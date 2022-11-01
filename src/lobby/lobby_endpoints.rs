@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::{
-    game::start_game,
+    game::start_new_game,
     lobby::{
         create_lobby, get_lobby, get_lobby_players, get_lobby_response, get_lobby_transaction,
         send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse,
@@ -114,10 +114,10 @@ pub async fn delete_lobby_endpoint(
     }
 
     if lobby.started {
-        send_broadcast_msg(&state, id, EventMessages::GameEnd)?;
+        send_broadcast_msg(&state, id, EventMessages::GameEnd).await?;
     }
     // just to be sure
-    send_broadcast_msg(&state, id, EventMessages::KickAll)?;
+    send_broadcast_msg(&state, id, EventMessages::KickAll).await?;
 
     sqlx::query!(
         // language=PostgreSQL
@@ -137,12 +137,7 @@ pub async fn delete_lobby_endpoint(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    match state.lobbies.write() {
-        Ok(mut wg) => {
-            wg.remove(&id);
-        }
-        Err(e) => return Err(AppError::InternalServerError(e.to_string())),
-    }
+    state.lobbies.write().await.remove(&id);
 
     tx.commit()
         .await
@@ -205,7 +200,7 @@ pub async fn start_game_endpoint(
 
     let players = get_lobby_players(id, &mut tx).await?;
 
-    start_game(&mut tx, id, lobby, players, &state).await?;
+    start_new_game(&mut tx, id, lobby, players, &state).await?;
 
     tx.commit()
         .await
@@ -243,7 +238,7 @@ pub async fn stop_game_endpoint(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    send_broadcast_msg(&state, id, EventMessages::GameEnd)?;
+    send_broadcast_msg(&state, id, EventMessages::GameEnd).await?;
 
     tx.commit()
         .await

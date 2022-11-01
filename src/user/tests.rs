@@ -584,7 +584,7 @@ async fn test_connect(db: PgPool) {
     )
     .await;
 
-    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+    assert!(state.lobbies.read().await.get(&lobby_1.id).is_some());
 
     let opt: Option<&AuthPayload> = None;
 
@@ -617,7 +617,7 @@ async fn test_connect(db: PgPool) {
         state
             .lobbies
             .read()
-            .unwrap()
+            .await
             .get(&lobby_1.id)
             .unwrap()
             ._receiver
@@ -652,7 +652,7 @@ async fn test_connect_no_pass(db: PgPool) {
     )
     .await;
 
-    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+    assert!(state.lobbies.read().await.get(&lobby_1.id).is_some());
 
     let opt: Option<&AuthPayload> = None;
 
@@ -695,7 +695,7 @@ async fn test_connect_max_user_limit(db: PgPool) {
     )
     .await;
 
-    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+    assert!(state.lobbies.read().await.get(&lobby_1.id).is_some());
 
     let opt: Option<&AuthPayload> = None;
 
@@ -777,7 +777,7 @@ async fn test_connect_user_connected(db: PgPool) {
     )
     .await;
 
-    assert!(state.lobbies.read().unwrap().get(&lobby_1.id).is_some());
+    assert!(state.lobbies.read().await.get(&lobby_1.id).is_some());
 
     let opt: Option<&AuthPayload> = None;
 
@@ -884,7 +884,7 @@ async fn test_quick_connect(db: PgPool) {
         state
             .lobbies
             .read()
-            .unwrap()
+            .await
             .get(&lobby_2.id)
             .unwrap()
             ._receiver
@@ -957,7 +957,7 @@ async fn test_quick_connect_temp_user(db: PgPool) {
         state
             .lobbies
             .read()
-            .unwrap()
+            .await
             .get(&lobby_2.id)
             .unwrap()
             ._receiver

@@ -7,5 +7,6 @@ create table "game_state"
     round_orders    jsonb not null,
     send_orders     jsonb not null,
     flow            jsonb not null,
-    demand          BIGINT not null
+    demand          BIGINT not null,
+    game_id         uuid   not null
 );
