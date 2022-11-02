@@ -123,6 +123,7 @@ pub enum Resource {
 pub enum EventAction {
     ShowMessage {
         message: String,
+        target: ActionTarget,
     },
     ChangeSettings {
         new_settings: Settings,
@@ -188,6 +189,7 @@ pub struct Order {
 pub struct UserState {
     pub user_id: Uuid,
     pub money: i64,
+    pub spent_money: i64,
     pub magazine_state: i64,
     pub performance: i64,
     pub back_order_sum: i64,
@@ -195,6 +197,7 @@ pub struct UserState {
     pub requested_orders: Vec<Order>,
     pub sent_orders: Vec<Order>,
     pub placed_order: Order,
+    pub received_order: Order,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::Auth,
-    entities::Settings,
+    entities::{Resource, Settings},
     error::AppError,
     lobby::{
         game::{process_user_round_end_message, GameUpdate, UserEndRound},
@@ -28,12 +28,13 @@ pub enum EventMessages {
     LobbyUpdate(LobbyUpdate),
     UserDisconnected(LobbyUserUpdate),
     GameStart(GameUpdate),
-    SettingsChangeGameEvent(Settings),
-    ResourceAddedAll(String, i64),
-    ResourceAddedUser(Uuid, String, i64),
+    GameEventSettingsChange(Settings),
+    GameEventPopUpUser(Uuid, String),
+    GameEventPopUpAll(String),
+    GameEventResourceAddedAll(Resource, i64),
+    GameEventResourceAddedUser(Uuid, Resource, i64),
     RoundEnd,
-    RoundStart,
-    GameEvent,
+    RoundStart(GameUpdate),
     KickAll,
     GameEnd,
     Ack(Uuid),
@@ -47,12 +48,12 @@ pub enum ServerMessage {
     UserDisconnected(LobbyUserUpdate),
     LobbyUpdate(LobbyUpdate),
     Error(AppError),
-    ResourceAdded(String, i64),
     RoundEnd,
-    RoundStart,
-    GameEvent,
+    RoundStart(GameUpdate),
     GameStart(GameUpdate),
-    SettingsChangeGameEvent(Settings),
+    GameEventSettingsChange(Settings),
+    GameEventPopUp(String),
+    GameEventResource(Resource, i64),
     KickAll,
     GameEnd,
     Ack,
@@ -122,16 +123,9 @@ pub async fn game_process(
                 EventMessages::NewUserConnected(l) => ServerMessage::NewUserConnected(l),
                 EventMessages::LobbyUpdate(u) => ServerMessage::LobbyUpdate(u),
                 EventMessages::UserDisconnected(l) => ServerMessage::UserDisconnected(l),
-                EventMessages::GameStart(u) => {
-                    if u.recipient != user.id {
-                        continue;
-                    }
-
-                    ServerMessage::GameStart(u)
-                }
-                EventMessages::RoundEnd => todo!(),
-                EventMessages::RoundStart => todo!(),
-                EventMessages::GameEvent => todo!(),
+                EventMessages::GameStart(u) => ServerMessage::GameStart(u),
+                EventMessages::RoundEnd => ServerMessage::RoundEnd,
+                EventMessages::RoundStart(s) => ServerMessage::RoundStart(s),
                 EventMessages::KickAll => ServerMessage::KickAll,
                 EventMessages::GameEnd => ServerMessage::GameEnd,
                 EventMessages::Ack(id) => {
@@ -148,16 +142,25 @@ pub async fn game_process(
                     ServerMessage::Error(e)
                 }
                 EventMessages::Error(e) => ServerMessage::Error(e),
-                EventMessages::SettingsChangeGameEvent(s) => {
-                    ServerMessage::SettingsChangeGameEvent(s)
+                EventMessages::GameEventSettingsChange(s) => {
+                    ServerMessage::GameEventSettingsChange(s)
                 }
-                EventMessages::ResourceAddedAll(s, v) => ServerMessage::ResourceAdded(s, v),
-                EventMessages::ResourceAddedUser(id, s, v) => {
+                EventMessages::GameEventResourceAddedAll(s, v) => {
+                    ServerMessage::GameEventResource(s, v)
+                }
+                EventMessages::GameEventResourceAddedUser(id, s, v) => {
                     if id != user.id {
                         continue;
                     }
-                    ServerMessage::ResourceAdded(s, v)
+                    ServerMessage::GameEventResource(s, v)
                 }
+                EventMessages::GameEventPopUpUser(id, s) => {
+                    if id != user.id {
+                        continue;
+                    }
+                    ServerMessage::GameEventPopUp(s)
+                }
+                EventMessages::GameEventPopUpAll(s) => ServerMessage::GameEventPopUp(s),
             };
 
             send_msg(&mut sender, message).await;
@@ -179,7 +182,7 @@ pub async fn game_process(
                                 )
                                 .await;
 
-                                if let Err(e) = res {
+                                if let Err(_) = res {
                                     tracing::error!("cos sie zesralo");
                                 }
                             }

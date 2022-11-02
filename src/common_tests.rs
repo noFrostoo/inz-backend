@@ -2,10 +2,7 @@ use axum::{body::Body, http::Request, Router};
 use serde::Serialize;
 use sqlx::PgPool;
 use std::str;
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use std::{collections::HashMap, sync::Arc};
 use tower::Service;
 use tower::ServiceExt;
 use uuid::Uuid;

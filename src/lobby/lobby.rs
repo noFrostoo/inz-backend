@@ -214,6 +214,8 @@ pub async fn get_lobby_players(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
     Ok(players)
+
+    //let players
 }
 
 pub async fn update_lobby(

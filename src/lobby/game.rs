@@ -6,11 +6,10 @@ use uuid::Uuid;
 
 use crate::{
     entities::{
-        ActionTarget, EventCondition, Flow, GameState, Lobby, MetBy, Order, Resource, User,
-        UserState,
+        ActionTarget, EventCondition, Flow, GameState, Lobby, MetBy, Order, Resource, Settings,
+        User, UserState,
     },
     error::AppError,
-    user,
     websockets::EventMessages,
     LobbyState, State,
 };
@@ -19,9 +18,10 @@ use super::lobby::{get_lobby, send_broadcast_msg};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct GameUpdate {
-    pub recipient: Uuid,
-    pub user_state: UserState,
     pub player_states: BTreeMap<Uuid, UserState>,
+    pub round: i64,
+    pub flow: Flow,
+    pub settings: Settings,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -56,6 +56,8 @@ pub async fn process_user_round_end_message(
                         ));
                     }
 
+                    send_broadcast_msg(&state, game_id, EventMessages::Ack(player)).await?;
+
                     let recipient = match lobby_state.round_state.flow.flow.get(&player) {
                         Some(i) => i,
                         None => {
@@ -68,10 +70,13 @@ pub async fn process_user_round_end_message(
                     msg.placed_order.sender = player;
 
                     user_state.money -= msg.placed_order.cost;
+                    user_state.spent_money += msg.placed_order.cost;
                     user_state.placed_order = msg.placed_order.clone();
 
-                    user_state.money -=
+                    let magazine_cost =
                         user_state.magazine_state * lobby_state.round_state.settings.magazine_cost;
+                    user_state.money -= magazine_cost;
+                    user_state.spent_money += magazine_cost;
 
                     lobby_state
                         .round_state
@@ -80,6 +85,7 @@ pub async fn process_user_round_end_message(
 
                     if let Some(io) = user_state.incoming_orders.pop() {
                         user_state.magazine_state += io.value;
+                        user_state.received_order = io;
                     } else {
                         return Err(AppError::InternalServerError(
                             "expected a incoming order".to_string(),
@@ -164,7 +170,7 @@ pub async fn process_game_events(
 ) -> Result<(), AppError> {
     let lobby = get_lobby(game_id, db).await?;
     for event in lobby.events.0.events {
-        let (met_by, players_who_met) = match event.condition {
+        let (met_by, players_targets) = match event.condition {
             EventCondition::RoundMet { round } => {
                 let mut players_id = Vec::new();
                 if lobby_state.round_state.round == round {
@@ -227,13 +233,32 @@ pub async fn process_game_events(
             }
         };
 
-        let mut messages_to_send = Vec::new();
+        if !met_by {
+            continue;
+        }
 
         for action in event.actions {
             match action {
-                crate::entities::EventAction::ShowMessage { message } => {
-                    messages_to_send.push(message)
-                }
+                crate::entities::EventAction::ShowMessage { message, target } => match target {
+                    ActionTarget::EventTarget => {
+                        for player_id in &players_targets {
+                            send_broadcast_msg(
+                                state,
+                                game_id,
+                                EventMessages::GameEventPopUpUser(*player_id, message.clone()),
+                            )
+                            .await?
+                        }
+                    }
+                    ActionTarget::AllPlayers => {
+                        send_broadcast_msg(
+                            state,
+                            game_id,
+                            EventMessages::GameEventPopUpAll(message.clone()),
+                        )
+                        .await?
+                    }
+                },
                 crate::entities::EventAction::ChangeSettings { new_settings } => {
                     sqlx::query!(
                         // language=PostgreSQL
@@ -251,7 +276,7 @@ pub async fn process_game_events(
                     send_broadcast_msg(
                         state,
                         game_id,
-                        EventMessages::SettingsChangeGameEvent(new_settings),
+                        EventMessages::GameEventSettingsChange(new_settings),
                     )
                     .await?
                 }
@@ -260,7 +285,35 @@ pub async fn process_game_events(
                     target,
                     value,
                 } => match target {
-                    ActionTarget::EventTarget => todo!(),
+                    ActionTarget::EventTarget => {
+                        for u_id in &players_targets {
+                            let mut player_state =
+                                match lobby_state.round_state.users_states.get_mut(u_id) {
+                                    Some(p) => p,
+                                    None => {
+                                        return Err(AppError::InternalServerError(
+                                            "expected user state".to_string(),
+                                        ))
+                                    }
+                                };
+                            match resource {
+                                Resource::Money => player_state.money += value,
+                                Resource::MagazineState => player_state.magazine_state += value,
+                                Resource::Performance => player_state.performance += value,
+                                Resource::BackOrderValue => player_state.back_order_sum += value,
+                            }
+                            send_broadcast_msg(
+                                state,
+                                game_id,
+                                EventMessages::GameEventResourceAddedUser(
+                                    *u_id,
+                                    resource.clone(),
+                                    value,
+                                ),
+                            )
+                            .await?
+                        }
+                    }
                     ActionTarget::AllPlayers => {
                         for (_, player_state) in &mut lobby_state.round_state.users_states {
                             match resource {
@@ -270,6 +323,12 @@ pub async fn process_game_events(
                                 Resource::BackOrderValue => player_state.back_order_sum += value,
                             }
                         }
+                        send_broadcast_msg(
+                            state,
+                            game_id,
+                            EventMessages::GameEventResourceAddedAll(resource, value),
+                        )
+                        .await?
                     }
                 },
             }
@@ -358,6 +417,8 @@ pub async fn finish_round(
     state: &Arc<State>,
     db: &PgPool,
 ) -> Result<(), AppError> {
+    send_broadcast_msg(state, game_id, EventMessages::RoundEnd).await?;
+
     let next_demand = generate_demand(lobby_state);
     let next_demand_cost = lobby_state.round_state.settings.resource_price * next_demand
         + lobby_state.round_state.settings.fix_order_cost;
@@ -459,6 +520,15 @@ pub async fn new_round(
 ) -> Result<(), AppError> {
     process_game_events(game_id, lobby_state, state, db).await?;
 
+    let msg = GameUpdate {
+        player_states: lobby_state.round_state.users_states.clone(),
+        round: 0,
+        flow: lobby_state.round_state.flow.clone(),
+        settings: lobby_state.round_state.settings.clone(),
+    };
+
+    send_broadcast_msg(state, game_id, EventMessages::RoundStart(msg)).await?;
+
     Ok(())
 }
 
@@ -478,12 +548,14 @@ pub async fn start_new_game(
         let user_state = UserState {
             user_id: player.id,
             money: lobby.settings.start_money,
+            spent_money: 0,
             magazine_state: lobby.settings.start_magazine,
             performance: 0, //TODO, fill with performance
             incoming_orders: lobby.settings.start_order_queue.clone(),
             requested_orders: lobby.settings.start_order_queue.clone(),
             back_order_sum: 0,
             placed_order: Order::default(),
+            received_order: Order::default(),
             sent_orders: Vec::new(),
         };
 
@@ -516,7 +588,7 @@ pub async fn start_new_game(
         sqlx::types::Json(&init_players_states) as _,
         sqlx::types::Json(init_orders) as _,
         sqlx::types::Json(init_send_order) as _,
-        sqlx::types::Json(flow) as _,
+        sqlx::types::Json(&flow) as _,
         demand,
         id
     )
@@ -533,7 +605,7 @@ pub async fn start_new_game(
             lobby_state.round_state.players = players_count;
             lobby_state.round_state.players_finished = 0;
             lobby_state.round_state.users_states = init_players_states.clone();
-            lobby_state.round_state.settings = lobby.settings.0;
+            lobby_state.round_state.settings = lobby.settings.0.clone();
         }
         None => {
             return Err(AppError::InternalServerError(
@@ -542,27 +614,18 @@ pub async fn start_new_game(
         }
     }
 
-    for player in &players {
-        let user_state = match init_players_states.get(&player.id) {
-            Some(state) => state,
-            None => {
-                return Err(AppError::InternalServerError(
-                    "expected a lobby state".to_string(),
-                ))
-            }
-        };
+    let msg = GameUpdate {
+        player_states: init_players_states.clone(),
+        round: 0,
+        flow: flow.clone(),
+        settings: lobby.settings.0.clone(),
+    };
 
-        let msg = GameUpdate {
-            recipient: player.id,
-            user_state: user_state.clone(),
-            player_states: init_players_states.clone(),
-        };
-
-        send_broadcast_msg(state, id, EventMessages::GameStart(msg)).await?;
-    }
+    send_broadcast_msg(state, id, EventMessages::GameStart(msg)).await?;
     Ok(())
 }
 
+//TODO: make sure owner is not in players
 //TODO: enforce min players number?
 fn redistribute_flow(players: &Vec<User>) -> Result<Flow, AppError> {
     let last_player = match players.last() {

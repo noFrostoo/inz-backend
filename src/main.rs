@@ -17,14 +17,17 @@ use axum::{
 };
 use axum_typed_websockets::WebSocketUpgrade;
 use entities::{Flow, Order, Settings, UserState};
-use lobby::lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint};
+use lobby::{
+    lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint},
+    stats::{game_stats, players_stats},
+};
 use once_cell::sync::Lazy;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::{
     collections::{BTreeMap, HashMap},
     env,
     net::SocketAddr,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 use tokio::sync;
 use tower::ServiceBuilder;
@@ -172,6 +175,8 @@ pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
         )
         .route("/lobby/:id/start", post(start_game_endpoint))
         .route("/lobby/:id/stop", post(stop_game_endpoint))
+        .route("/lobby/:id/stats/game/", get(game_stats))
+        .route("/lobby/:id/stats/users/", get(players_stats))
         .route("/lobby/websocket", get(websocket_handler))
         .route(
             "/template",
