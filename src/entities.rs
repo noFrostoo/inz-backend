@@ -46,7 +46,7 @@ pub struct Settings {
     pub start_money: i64,
     pub start_magazine: i64,
     pub start_order_queue: Vec<Order>,
-    pub play_time: i64,
+    pub max_rounds: i64,
     pub round_time: i64,
     pub demand_style: DemandStyle,
     pub transport_cost: i64,

@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, f64::consts::E, sync::Arc};
+use std::{collections::{BTreeMap, HashMap}, f64::consts::E, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -14,7 +14,7 @@ use crate::{
     LobbyState, State,
 };
 
-use super::lobby::{get_lobby, send_broadcast_msg};
+use super::{lobby::{get_lobby, send_broadcast_msg}, stats::{self, get_player_stats, UserStats, UserStatsType}};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct GameUpdate {
@@ -23,6 +23,13 @@ pub struct GameUpdate {
     pub flow: Flow,
     pub settings: Settings,
 }
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct GameEnd {
+    pub player_states: BTreeMap<Uuid, UserState>,
+    pub stats: HashMap<String, HashMap<Uuid, Vec<i64>>>
+}
+
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct UserEndRound {
@@ -507,8 +514,13 @@ pub async fn finish_round(
         AppError::DbErr(e.to_string())
     })?;
 
-    new_round(game_id, lobby_state, state, db).await?;
-
+    let lobby = get_lobby(game_id, db).await?;
+    if lobby_state.round_state.round == lobby.settings.max_rounds {
+        finish_game(game_id, lobby_state, state, db).await?;
+    } else {
+        new_round(game_id, lobby_state, state, db).await?;
+    }
+    
     Ok(())
 }
 
@@ -529,6 +541,24 @@ pub async fn new_round(
 
     send_broadcast_msg(state, game_id, EventMessages::RoundStart(msg)).await?;
 
+    Ok(())
+}
+
+pub async fn finish_game(
+    game_id: Uuid,
+    lobby_state: &mut LobbyState,
+    state: &Arc<State>,
+    db: &PgPool,
+) -> Result<(), AppError> {
+
+    let stats_types = UserStats{ required_stats: vec![UserStatsType::Money, UserStatsType::MagazineState, UserStatsType::BackOrder, UserStatsType::PlacedOrder, UserStatsType::Performance, UserStatsType::SpentMoney] };
+    let stats = get_player_stats(game_id, db, stats_types).await?;
+    let msg = GameEnd {
+        player_states: lobby_state.round_state.users_states.clone(),
+        stats: stats,
+    };
+
+    send_broadcast_msg(state, game_id, EventMessages::GameEnd(msg)).await?;
     Ok(())
 }
 

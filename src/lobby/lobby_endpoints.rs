@@ -19,8 +19,8 @@ use crate::{
 use super::{
     game::start_new_game,
     lobby::{
-        create_lobby, get_lobby, get_lobby_players, get_lobby_response, get_lobby_transaction,
-        send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse,
+        create_lobby, get_lobby, get_lobby_response, get_lobby_transaction,
+        send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse, get_lobby_players,
     },
 };
 
@@ -238,7 +238,7 @@ pub async fn stop_game_endpoint(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    send_broadcast_msg(&state, id, EventMessages::GameEnd).await?;
+    
 
     tx.commit()
         .await

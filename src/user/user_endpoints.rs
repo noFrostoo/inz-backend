@@ -12,7 +12,7 @@ use crate::{
     auth::{Auth, AuthAdmin},
     entities::{Lobby, User, UserRole},
     error::AppError,
-    lobby::lobby::{get_lobby_players, get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
+    lobby::lobby::{get_lobby_users_transaction, get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
     user::user::{
         connect_user, create_user, generate_password, generate_username, lock_lobby_tables,
         lock_user_tables, quick_connect, update_user_password,
@@ -216,7 +216,7 @@ pub async fn disconnect_user_endpoint(
 
     let game_id = user.game_id.unwrap();
 
-    let users = get_lobby_players(game_id, &mut tx).await?;
+    let users = get_lobby_users_transaction(game_id, &mut tx).await?;
 
     event!(Level::INFO, "Disconnecting user: {}", id);
 

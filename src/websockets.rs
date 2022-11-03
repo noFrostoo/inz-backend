@@ -10,7 +10,7 @@ use crate::{
     entities::{Resource, Settings},
     error::AppError,
     lobby::{
-        game::{process_user_round_end_message, GameUpdate, UserEndRound},
+        game::{process_user_round_end_message, GameUpdate, UserEndRound, GameEnd},
         lobby::{send_broadcast_msg, LobbyUpdate, LobbyUserUpdate},
     },
     user::user::get_user,
@@ -33,10 +33,10 @@ pub enum EventMessages {
     GameEventPopUpAll(String),
     GameEventResourceAddedAll(Resource, i64),
     GameEventResourceAddedUser(Uuid, Resource, i64),
-    RoundEnd,
     RoundStart(GameUpdate),
+    RoundEnd,
     KickAll,
-    GameEnd,
+    GameEnd(GameEnd),
     Ack(Uuid),
     ErrorUser(Uuid, AppError),
     Error(AppError),
@@ -48,14 +48,14 @@ pub enum ServerMessage {
     UserDisconnected(LobbyUserUpdate),
     LobbyUpdate(LobbyUpdate),
     Error(AppError),
-    RoundEnd,
     RoundStart(GameUpdate),
+    RoundEnd,
     GameStart(GameUpdate),
     GameEventSettingsChange(Settings),
     GameEventPopUp(String),
     GameEventResource(Resource, i64),
     KickAll,
-    GameEnd,
+    GameEnd(GameEnd),
     Ack,
 }
 
@@ -124,10 +124,9 @@ pub async fn game_process(
                 EventMessages::LobbyUpdate(u) => ServerMessage::LobbyUpdate(u),
                 EventMessages::UserDisconnected(l) => ServerMessage::UserDisconnected(l),
                 EventMessages::GameStart(u) => ServerMessage::GameStart(u),
-                EventMessages::RoundEnd => ServerMessage::RoundEnd,
                 EventMessages::RoundStart(s) => ServerMessage::RoundStart(s),
                 EventMessages::KickAll => ServerMessage::KickAll,
-                EventMessages::GameEnd => ServerMessage::GameEnd,
+                EventMessages::GameEnd(ge) => ServerMessage::GameEnd(ge),
                 EventMessages::Ack(id) => {
                     if id != user.id {
                         continue;
@@ -161,6 +160,7 @@ pub async fn game_process(
                     ServerMessage::GameEventPopUp(s)
                 }
                 EventMessages::GameEventPopUpAll(s) => ServerMessage::GameEventPopUp(s),
+                EventMessages::RoundEnd => ServerMessage::RoundEnd,
             };
 
             send_msg(&mut sender, message).await;

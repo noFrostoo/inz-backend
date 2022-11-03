@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction, Executor};
 use tokio::sync;
 use uuid::Uuid;
 
@@ -140,7 +140,8 @@ async fn generate_valid_code(tx: &mut Transaction<'_, Postgres>) -> Result<Strin
     Ok(code)
 }
 
-pub async fn get_lobby(id: Uuid, db: &PgPool) -> Result<Lobby, AppError> {
+pub async fn get_lobby<'a, E>(id: Uuid, db: E) -> Result<Lobby, AppError>
+where E: Executor<'a, Database = Postgres> {
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
         r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>" from "lobby" where id = $1"#,
@@ -180,7 +181,7 @@ pub async fn get_lobby_response(
 ) -> Result<LobbyResponse, AppError> {
     let lobby = get_lobby_transaction(id, tx).await?;
 
-    let players = get_lobby_players(id, tx).await?;
+    let players = get_lobby_users_transaction(id, tx).await?;
 
     let owner = sqlx::query_as!(User,
         // language=PostgreSQL
@@ -200,7 +201,7 @@ pub async fn get_lobby_response(
     })
 }
 
-pub async fn get_lobby_players(
+pub async fn get_lobby_users_transaction(
     id: Uuid,
     tx: &mut Transaction<'_, Postgres>,
 ) -> Result<Vec<User>, AppError> {
@@ -214,8 +215,48 @@ pub async fn get_lobby_players(
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
     Ok(players)
+}
 
-    //let players
+pub async fn get_lobby_users(
+    id: Uuid,
+    db: &PgPool,
+) -> Result<Vec<User>, AppError> {
+    let players = sqlx::query_as!(
+        User,
+        // language=PostgreSQL
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where game_id = $1 "#,
+        id
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+    Ok(players)
+}
+
+pub async fn get_lobby_players(
+    id: Uuid,
+    tx: &mut Transaction<'_, Postgres>,
+) -> Result<Vec<User>, AppError> {
+    let lobby = get_lobby(id, &mut *tx).await?;
+
+    let users = sqlx::query_as!(
+        User,
+        // language=PostgreSQL
+        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where game_id = $1 "#,
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    let mut players: Vec<User> = Vec::new();
+    for user in users {
+        if user.id != lobby.owner_id {
+            players.push(user);
+        }
+    }
+
+    Ok(players)
 }
 
 pub async fn update_lobby(

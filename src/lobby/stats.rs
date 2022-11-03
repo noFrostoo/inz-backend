@@ -12,8 +12,10 @@ use crate::{
     auth::Auth,
     entities::{Flow, GameState, Order, UserState},
     error::AppError,
-    State,
+    State, user,
 };
+
+use super::lobby::{get_lobby, get_lobby_users_transaction, get_lobby_users};
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct GameStats {
@@ -50,6 +52,19 @@ pub async fn players_stats(
     Json(stats_types): Json<UserStats>,
     auth: Auth,
 ) -> Result<Json<HashMap<String, HashMap<Uuid, Vec<i64>>>>, AppError> {
+    let lobby = get_lobby(game_id, db).await?;
+    if !lobby.started {
+        return Err(AppError::GameNotStarted("can't get stats for game not started".to_string()));
+    }
+    let users = get_lobby_users(game_id, db).await?;
+    if let None = users.iter().position(|x| x.id == auth.user_id) {
+        return Err(AppError::Unauthorized("not connected to the game".to_string()));
+    }
+
+    Ok(Json(get_player_stats(game_id, db, stats_types).await?))
+}
+
+pub async fn get_player_stats(game_id: Uuid, db: &PgPool, stats_types: UserStats) -> Result<HashMap<String, HashMap<Uuid, Vec<i64>>>, AppError> {
     let games_states = sqlx::query_as!(GameState,
         r#"
         select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", game_id
@@ -60,9 +75,7 @@ pub async fn players_stats(
     ).fetch_all(db)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
-
     let mut stats = HashMap::new();
-
     for stats_type in stats_types.required_stats {
         match stats_type {
             UserStatsType::Money => {
@@ -106,8 +119,7 @@ pub async fn players_stats(
             ),
         }
     }
-
-    Ok(Json(stats))
+    Ok(stats)
 }
 
 fn get_stats_for_type(
