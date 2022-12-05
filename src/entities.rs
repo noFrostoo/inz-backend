@@ -11,7 +11,6 @@ use sqlx::{
 #[sqlx(rename_all = "lowercase")]
 pub enum UserRole {
     User,
-    GameAdmin,
     Admin,
     Temp,
 }
@@ -42,20 +41,27 @@ pub struct Lobby {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Settings {
-    pub resource_price: i64,
-    pub start_money: i64,
-    pub start_magazine: i64,
-    pub start_order_queue: Vec<Order>,
     pub max_rounds: i64,
-    pub round_time: i64,
-    pub demand_style: DemandStyle,
-    pub transport_cost: i64,
-    pub magazine_cost: i64,
-    pub fix_order_cost: i64,
+    pub show_stats_for_users: bool,
+    pub user_classes: Vec<u32>,
+    pub start_order_queue: BTreeMap<u32, Vec<Order>>,
+    pub demand_style: GeneratedOrderStyle,
+    pub supply_style: GeneratedOrderStyle,
+    pub unlimited_money: bool,
+    pub resource_basic_price: i64,
+    pub resource_price: BTreeMap<u32, i64>,
+    pub start_money: BTreeMap<u32, i64>,
+    pub start_magazine: BTreeMap<u32, i64>,
+    pub transport_cost: BTreeMap<u32, i64>,
+    pub magazine_cost: BTreeMap<u32, i64>,
+    pub fix_order_cost: BTreeMap<u32, i64>,
+    pub back_order_cost: BTreeMap<u32, i64>,
+    pub additional_cost: BTreeMap<u32, i64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub enum DemandStyle {
+#[serde(tag = "type")]
+pub enum GeneratedOrderStyle {
     #[default]
     Default,
     Linear {
@@ -72,7 +78,7 @@ pub enum DemandStyle {
         modulator: i64,
     },
     List {
-        demand: Vec<i64>,
+        list: Vec<i64>,
     },
 }
 
@@ -89,6 +95,7 @@ impl GameEvents {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct GameEvent {
+    pub name: String,
     pub condition: EventCondition,
     pub actions: Vec<EventAction>,
     pub recipients: EventsRecipients,
@@ -165,6 +172,7 @@ pub struct GameState {
     pub user_states: Json<BTreeMap<Uuid, UserState>>,
     pub round_orders: Json<BTreeMap<Uuid, Order>>,
     pub send_orders: Json<BTreeMap<Uuid, Order>>,
+    pub players_classes: Json<BTreeMap<Uuid, u32>>,
     pub flow: Json<Flow>,
     pub demand: i64,
     pub game_id: Uuid,

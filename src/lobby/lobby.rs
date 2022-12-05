@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Postgres, Transaction, Executor};
+use sqlx::{Executor, PgPool, Postgres, Transaction};
 use tokio::sync;
 use uuid::Uuid;
 
 use rand::Rng;
 
 use crate::{
-    auth::AuthGameAdmin,
+    auth::AuthAdmin,
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     websockets::EventMessages,
@@ -66,7 +66,7 @@ pub async fn create_lobby(
     tx: &mut Transaction<'_, Postgres>,
     payload: CreateLobby,
     state: Arc<State>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Lobby, AppError> {
     let owner_id = auth.user_id;
     let mut connect_code: Option<String> = None;
@@ -141,7 +141,9 @@ async fn generate_valid_code(tx: &mut Transaction<'_, Postgres>) -> Result<Strin
 }
 
 pub async fn get_lobby<'a, E>(id: Uuid, db: E) -> Result<Lobby, AppError>
-where E: Executor<'a, Database = Postgres> {
+where
+    E: Executor<'a, Database = Postgres>,
+{
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
         r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>" from "lobby" where id = $1"#,
@@ -217,10 +219,7 @@ pub async fn get_lobby_users_transaction(
     Ok(players)
 }
 
-pub async fn get_lobby_users(
-    id: Uuid,
-    db: &PgPool,
-) -> Result<Vec<User>, AppError> {
+pub async fn get_lobby_users(id: Uuid, db: &PgPool) -> Result<Vec<User>, AppError> {
     let players = sqlx::query_as!(
         User,
         // language=PostgreSQL
@@ -264,7 +263,7 @@ pub async fn update_lobby(
     tx: &mut Transaction<'_, Postgres>,
     payload: CreateLobby,
     state: Arc<State>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<LobbyResponse, AppError> {
     let old = get_lobby_response(id, &mut *tx).await?;
 

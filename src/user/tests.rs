@@ -238,7 +238,7 @@ async fn test_get_create(db: PgPool) {
             Some(&CreateUser {
                 password: "user".to_string(),
                 username: "user".to_string(),
-                role: UserRole::GameAdmin,
+                role: UserRole::Admin,
             }),
             Some(&auth),
         ))
@@ -256,7 +256,7 @@ async fn test_get_create(db: PgPool) {
         serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
             .unwrap();
 
-    assert_eq!(resp_user.role, UserRole::GameAdmin);
+    assert_eq!(resp_user.role, UserRole::Admin);
     assert_eq!(resp_user.username, "user");
 
     let opt: Option<&AuthPayload> = None;
@@ -298,7 +298,7 @@ async fn test_get_create_bad_role(db: PgPool) {
             Some(&CreateUser {
                 password: "user".to_string(),
                 username: "user".to_string(),
-                role: UserRole::GameAdmin,
+                role: UserRole::Admin,
             }),
             Some(&auth),
         ))

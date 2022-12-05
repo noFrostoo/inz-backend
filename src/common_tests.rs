@@ -7,7 +7,7 @@ use tower::Service;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use crate::auth::AuthGameAdmin;
+use crate::auth::AuthAdmin;
 use crate::entities::{GameEvents, Lobby, Settings};
 use crate::lobby::lobby::{create_lobby, CreateLobby};
 use crate::{
@@ -124,7 +124,7 @@ pub async fn create_test_lobbies(
         &mut tx,
         lobby_params,
         state.clone(),
-        AuthGameAdmin {
+        AuthAdmin {
             username: user.to_string(),
             user_id: Uuid::parse_str(user_id).unwrap(),
             role: crate::entities::UserRole::Admin,
@@ -149,7 +149,7 @@ pub async fn create_test_lobbies(
         &mut tx,
         lobby_params,
         state,
-        AuthGameAdmin {
+        AuthAdmin {
             username: user.to_string(),
             user_id: Uuid::parse_str(user_id).unwrap(),
             role: crate::entities::UserRole::Admin,

@@ -8,7 +8,7 @@ VALUES
     ('c994b839-84f4-4509-ad49-59119133d6f5', 'bob',
      '$argon2id$v=19$m=4096,t=3,p=1$/6XXIkFwpibpEe4sq8Qs4w$UG575rlLgt0THTBSsFrynPm/hpy7F1xzJ4DdpZ47mYc', 'user'),
     ('bbb4b839-84f4-4519-ad49-59119133d6f5', 'bob2',
-     '$argon2id$v=19$m=4096,t=3,p=1$/6XXIkFwpibpEe4sq8Qs4w$UG575rlLgt0THTBSsFrynPm/hpy7F1xzJ4DdpZ47mYc', 'gameadmin'),
+     '$argon2id$v=19$m=4096,t=3,p=1$/6XXIkFwpibpEe4sq8Qs4w$UG575rlLgt0THTBSsFrynPm/hpy7F1xzJ4DdpZ47mYc', 'admin'),
     ('c994b839-84f4-4509-ad49-59429133d6f5', 'bob3',
      '$argon2id$v=19$m=4096,t=3,p=1$/6XXIkFwpibpEe4sq8Qs4w$UG575rlLgt0THTBSsFrynPm/hpy7F1xzJ4DdpZ47mYc', 'user'),
     ('b994b839-84f4-4509-ad49-59429133d6f5', 'bob4',

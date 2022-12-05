@@ -17,6 +17,7 @@ use axum::{
 };
 use axum_typed_websockets::WebSocketUpgrade;
 use entities::{Flow, Order, Settings, UserState};
+use hyper::Method;
 use lobby::{
     lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint},
     stats::{game_stats, players_stats},
@@ -31,6 +32,7 @@ use std::{
 };
 use tokio::sync;
 use tower::ServiceBuilder;
+use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 use websockets::{game_process, ClientMessage, EventMessages, ServerMessage};
 
@@ -70,6 +72,7 @@ pub struct RoundState {
     users_states: BTreeMap<Uuid, UserState>,
     round_orders: BTreeMap<Uuid, Order>,
     send_orders: BTreeMap<Uuid, Order>,
+    player_classes: BTreeMap<Uuid, u32>,
     settings: Settings,
     flow: Flow,
     demand: i64,
@@ -84,6 +87,7 @@ impl RoundState {
             users_states: BTreeMap::new(),
             round_orders: BTreeMap::new(),
             send_orders: BTreeMap::new(),
+            player_classes: BTreeMap::new(),
             settings: Settings::default(),
             flow: Flow::default(),
             demand: 0,
@@ -149,6 +153,13 @@ async fn websocket_handler(
 }
 
 pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
+    let cors = CorsLayer::new()
+        // allow `GET` and `POST` when accessing the resource
+        .allow_methods(vec![Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_headers(Any)
+        // allow requests from any origin
+        .allow_origin(Any);
+
     Router::new()
         .route("/", get(root))
         .route("/users", post(create_user_endpoint).get(get_users_endpoint))
@@ -201,6 +212,7 @@ pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(db))
-                .layer(Extension(state)), //can add cookie management here
+                .layer(Extension(state))
+                .layer(cors), //can add cookie management here
         )
 }

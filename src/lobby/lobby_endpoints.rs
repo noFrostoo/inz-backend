@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use axum::{
     extract::{Extension, Path, Query},
@@ -8,7 +8,7 @@ use sqlx::{PgPool, QueryBuilder};
 use uuid::Uuid;
 
 use crate::{
-    auth::{Auth, AuthGameAdmin},
+    auth::{Auth, AuthAdmin},
     entities::{Lobby, UserRole},
     error::AppError,
     user::user::lock_lobby_tables,
@@ -17,10 +17,10 @@ use crate::{
 };
 
 use super::{
-    game::start_new_game,
+    game::{start_new_game, GameEnd},
     lobby::{
-        create_lobby, get_lobby, get_lobby_response, get_lobby_transaction,
-        send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse, get_lobby_players,
+        create_lobby, get_lobby, get_lobby_players, get_lobby_response, get_lobby_transaction,
+        send_broadcast_msg, update_lobby, CreateLobby, LobbiesQuery, LobbiesType, LobbyResponse,
     },
 };
 
@@ -28,7 +28,7 @@ pub async fn create_lobby_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateLobby>,
     Extension(state): Extension<Arc<State>>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Json<Lobby>, AppError> {
     let mut tx = db
         .begin()
@@ -114,8 +114,9 @@ pub async fn delete_lobby_endpoint(
     }
 
     if lobby.started {
-        send_broadcast_msg(&state, id, EventMessages::GameEnd).await?;
+        return Err(AppError::BadRequest("Game started".to_string()))
     }
+    
     // just to be sure
     send_broadcast_msg(&state, id, EventMessages::KickAll).await?;
 
@@ -151,7 +152,7 @@ pub async fn update_lobby_endpoint(
     Extension(ref db): Extension<PgPool>,
     Extension(state): Extension<Arc<State>>,
     Json(payload): Json<CreateLobby>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Json<LobbyResponse>, AppError> {
     let mut tx = db
         .begin()
@@ -173,7 +174,8 @@ pub async fn start_game_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
     Extension(state): Extension<Arc<State>>,
-    _auth: AuthGameAdmin,
+    Json(player_classes): Json<BTreeMap<Uuid, u32>>,
+    _auth: AuthAdmin,
 ) -> Result<(), AppError> {
     let lobby = get_lobby(id, db).await?;
 
@@ -200,7 +202,7 @@ pub async fn start_game_endpoint(
 
     let players = get_lobby_players(id, &mut tx).await?;
 
-    start_new_game(&mut tx, id, lobby, players, &state).await?;
+    start_new_game(&mut tx, id, lobby, players, player_classes, &state).await?;
 
     tx.commit()
         .await
@@ -213,7 +215,7 @@ pub async fn stop_game_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
     Extension(state): Extension<Arc<State>>,
-    _auth: AuthGameAdmin,
+    _auth: AuthAdmin,
 ) -> Result<(), AppError> {
     let lobby = get_lobby(id, db).await?;
 
@@ -237,8 +239,6 @@ pub async fn stop_game_endpoint(
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
-
-    
 
     tx.commit()
         .await

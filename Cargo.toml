@@ -25,6 +25,7 @@ rand_core = { version = "0.6", features = ["std"] }
 axum-typed-websockets = "0.4.0"
 futures = "0.3"
 hyper = { version = "0.14", features = ["full"] }
+tower-http = { version = "0.3.4", features = ["full"]}
 
 [dependencies.uuid]
 version = "1.1.2"

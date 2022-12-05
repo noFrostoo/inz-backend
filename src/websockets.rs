@@ -10,7 +10,7 @@ use crate::{
     entities::{Resource, Settings},
     error::AppError,
     lobby::{
-        game::{process_user_round_end_message, GameUpdate, UserEndRound, GameEnd},
+        game::{process_user_round_end_message, GameEnd, GameUpdate, UserEndRound},
         lobby::{send_broadcast_msg, LobbyUpdate, LobbyUserUpdate},
     },
     user::user::get_user,

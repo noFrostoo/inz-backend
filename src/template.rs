@@ -9,7 +9,7 @@ use sqlx::{Executor, PgPool, Postgres};
 use uuid::Uuid;
 
 use crate::{
-    auth::{Auth, AuthGameAdmin},
+    auth::{Auth, AuthAdmin},
     entities::{GameEvents, Lobby, Settings, Template, UserRole},
     error::AppError,
     lobby::lobby::{create_lobby, get_lobby, CreateLobby},
@@ -42,7 +42,7 @@ pub struct CreateTemplate {
 pub async fn create_template_from_lobby_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateTemplateFromLobby>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Json<Template>, AppError> {
     let lobby = get_lobby(payload.lobby_id, db).await?;
 
@@ -67,7 +67,7 @@ pub async fn create_template_from_lobby_endpoint(
 pub async fn create_template_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateTemplate>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Json<Template>, AppError> {
     let template = create_template(
         db,
@@ -115,7 +115,7 @@ where
 pub async fn get_template_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
-    _auth: AuthGameAdmin,
+    _auth: AuthAdmin,
 ) -> Result<Json<Template>, AppError> {
     let template = get_template(id, db).await?;
 
@@ -139,7 +139,7 @@ pub async fn get_template(id: Uuid, db: &PgPool) -> Result<Template, AppError> {
 
 pub async fn get_templates_endpoint(
     Extension(ref db): Extension<PgPool>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Json<Vec<Template>>, AppError> {
     let templates = sqlx::query_as!(Template,
         // language=PostgreSQL
@@ -184,7 +184,7 @@ pub async fn update_template_endpoint(
     Path(id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateTemplate>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Json<Template>, AppError> {
     let old = get_lobby(id, db).await?;
 
@@ -216,7 +216,7 @@ pub async fn create_lobby_from_template(
     Json(payload): Json<CreateLobbyFromTemplate>,
     Extension(ref db): Extension<PgPool>,
     Extension(state): Extension<Arc<State>>,
-    auth: AuthGameAdmin,
+    auth: AuthAdmin,
 ) -> Result<Json<Lobby>, AppError> {
     let template = get_template(id, db).await?;
 

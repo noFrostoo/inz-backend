@@ -1,4 +1,8 @@
-use std::{collections::{BTreeMap, HashMap}, f64::consts::E, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    f64::consts::E,
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -6,15 +10,18 @@ use uuid::Uuid;
 
 use crate::{
     entities::{
-        ActionTarget, EventCondition, Flow, GameState, Lobby, MetBy, Order, Resource, Settings,
-        User, UserState,
+        ActionTarget, EventAction, EventCondition, Flow, GameState, Lobby, MetBy, Order, Resource,
+        Settings, User, UserState,
     },
     error::AppError,
     websockets::EventMessages,
     LobbyState, State,
 };
 
-use super::{lobby::{get_lobby, send_broadcast_msg}, stats::{self, get_player_stats, UserStats, UserStatsType}};
+use super::{
+    lobby::{get_lobby, send_broadcast_msg},
+    stats::{get_player_stats, UserStats, UserStatsType},
+};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct GameUpdate {
@@ -27,9 +34,8 @@ pub struct GameUpdate {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct GameEnd {
     pub player_states: BTreeMap<Uuid, UserState>,
-    pub stats: HashMap<String, HashMap<Uuid, Vec<i64>>>
+    pub stats: HashMap<String, HashMap<Uuid, Vec<i64>>>,
 }
-
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct UserEndRound {
@@ -46,13 +52,52 @@ pub async fn process_user_round_end_message(
     //TODO: rewrite to if with early exit
     match state.clone().lobbies.write().await.get_mut(&game_id) {
         Some(mut lobby_state) => {
-            if msg.placed_order.value != 0 {
-                msg.placed_order.cost = msg.placed_order.value
-                    * lobby_state.round_state.settings.resource_price
-                    + lobby_state.round_state.settings.fix_order_cost;
-            } else {
-                msg.placed_order.cost = 0
+            let player_class;
+            match lobby_state.round_state.player_classes.get(&player) {
+                Some(c) => player_class = c,
+                None => return Err(AppError::BadRequest("player not found".to_string())),
             }
+
+            let resource_price = match lobby_state
+                .round_state
+                .settings
+                .resource_price
+                .get(&player_class) {
+                Some(c) => c,
+                None => {
+                    return Err(AppError::BadRequest(
+                        "player-resource price not found".to_string(),
+                    ))
+                }
+            };
+
+            let fix_order_cost= match lobby_state
+                .round_state
+                .settings
+                .fix_order_cost
+                .get(&player_class)
+            {
+                Some(c) => c,
+                None => {
+                    return Err(AppError::BadRequest(
+                        "player-fix_order_cost not found".to_string(),
+                    ))
+                }
+            };
+
+            let magazine_cost = match lobby_state
+                .round_state
+                .settings
+                .magazine_cost
+                .get(&player_class)
+            {
+                Some(c) => c,
+                None => {
+                    return Err(AppError::BadRequest(
+                        "player-magazine_cost not found".to_string(),
+                    ))
+                }
+            };
 
             match lobby_state.round_state.users_states.get_mut(&player) {
                 Some(user_state) => {
@@ -80,8 +125,7 @@ pub async fn process_user_round_end_message(
                     user_state.spent_money += msg.placed_order.cost;
                     user_state.placed_order = msg.placed_order.clone();
 
-                    let magazine_cost =
-                        user_state.magazine_state * lobby_state.round_state.settings.magazine_cost;
+                    let magazine_cost = user_state.magazine_state * magazine_cost;
                     user_state.money -= magazine_cost;
                     user_state.spent_money += magazine_cost;
 
@@ -122,9 +166,7 @@ pub async fn process_user_round_end_message(
                             send_order_val += diff;
                         }
 
-                        let send_order_val_cost = send_order_val
-                            * lobby_state.round_state.settings.resource_price
-                            + lobby_state.round_state.settings.fix_order_cost;
+                        let send_order_val_cost = send_order_val * resource_price + fix_order_cost;
 
                         let send_order = Order {
                             recipient: *recipient,
@@ -177,172 +219,215 @@ pub async fn process_game_events(
 ) -> Result<(), AppError> {
     let lobby = get_lobby(game_id, db).await?;
     for event in lobby.events.0.events {
-        let (met_by, players_targets) = match event.condition {
-            EventCondition::RoundMet { round } => {
-                let mut players_id = Vec::new();
-                if lobby_state.round_state.round == round {
-                    for (u_id, _) in &lobby_state.round_state.users_states {
-                        players_id.push(*u_id);
-                    }
-                }
-                (players_id.len() != 0, players_id)
-            }
-            EventCondition::ValueExceed {
-                resource,
-                met_by,
-                value,
-            } => match resource {
-                Resource::Money => evaluate_value_exceed(|us| us.money, met_by, lobby_state, value),
-                Resource::MagazineState => {
-                    evaluate_value_exceed(|us| us.magazine_state, met_by, lobby_state, value)
-                }
-                Resource::Performance => {
-                    evaluate_value_exceed(|us| us.performance, met_by, lobby_state, value)
-                }
-                Resource::BackOrderValue => {
-                    evaluate_value_exceed(|us| us.back_order_sum, met_by, lobby_state, value)
-                }
-            },
-            EventCondition::SingleChange { resource, value } => {
-                let last_state = sqlx::query_as!(GameState,
-                    r#"
-                    select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", game_id
-                    from "game_state"
-                    where game_id = $1 and round = $2"#,
-                    game_id,
-                    lobby_state.round_state.round - 1
-                ).fetch_one(db)
-                .await
-                .map_err(|e| {
-                    AppError::DbErr(e.to_string())
-                })?;
+        let (cond_met, targets) = evaluate_cond(&event, lobby_state, db, game_id).await?;
 
-                match resource {
-                    Resource::Money => {
-                        evaluate_single_change(|us| us.money, lobby_state, last_state, value)
-                    }
-                    Resource::MagazineState => evaluate_single_change(
-                        |us| us.magazine_state,
-                        lobby_state,
-                        last_state,
-                        value,
-                    ),
-                    Resource::Performance => {
-                        evaluate_single_change(|us| us.performance, lobby_state, last_state, value)
-                    }
-                    Resource::BackOrderValue => evaluate_single_change(
-                        |us| us.back_order_sum,
-                        lobby_state,
-                        last_state,
-                        value,
-                    ),
-                }
-            }
-        };
-
-        if !met_by {
+        if !cond_met {
             continue;
         }
 
         for action in event.actions {
             match action {
-                crate::entities::EventAction::ShowMessage { message, target } => match target {
-                    ActionTarget::EventTarget => {
-                        for player_id in &players_targets {
-                            send_broadcast_msg(
-                                state,
-                                game_id,
-                                EventMessages::GameEventPopUpUser(*player_id, message.clone()),
-                            )
-                            .await?
-                        }
-                    }
-                    ActionTarget::AllPlayers => {
-                        send_broadcast_msg(
-                            state,
-                            game_id,
-                            EventMessages::GameEventPopUpAll(message.clone()),
-                        )
-                        .await?
-                    }
-                },
-                crate::entities::EventAction::ChangeSettings { new_settings } => {
-                    sqlx::query!(
-                        // language=PostgreSQL
-                        r#"update "lobby" set settings = $1 where id = $2"#,
-                        sqlx::types::Json(&new_settings) as _,
-                        game_id
-                    )
-                    .execute(db)
-                    .await
-                    .map_err(|e| AppError::DbErr(e.to_string()))?;
-
-                    lobby_state.round_state.settings = new_settings.clone();
-
-                    //TODO: move to a const
-                    send_broadcast_msg(
-                        state,
-                        game_id,
-                        EventMessages::GameEventSettingsChange(new_settings),
-                    )
-                    .await?
+                EventAction::ShowMessage { message, target } => {
+                    execute_pop_up_action(target, &targets, state, game_id, message).await?
                 }
-                crate::entities::EventAction::AddResource {
+                EventAction::ChangeSettings { new_settings } => {
+                    execute_settings_change(db, lobby_state, new_settings, state, game_id).await?
+                }
+                EventAction::AddResource {
                     resource,
                     target,
                     value,
-                } => match target {
-                    ActionTarget::EventTarget => {
-                        for u_id in &players_targets {
-                            let mut player_state =
-                                match lobby_state.round_state.users_states.get_mut(u_id) {
-                                    Some(p) => p,
-                                    None => {
-                                        return Err(AppError::InternalServerError(
-                                            "expected user state".to_string(),
-                                        ))
-                                    }
-                                };
-                            match resource {
-                                Resource::Money => player_state.money += value,
-                                Resource::MagazineState => player_state.magazine_state += value,
-                                Resource::Performance => player_state.performance += value,
-                                Resource::BackOrderValue => player_state.back_order_sum += value,
-                            }
-                            send_broadcast_msg(
-                                state,
-                                game_id,
-                                EventMessages::GameEventResourceAddedUser(
-                                    *u_id,
-                                    resource.clone(),
-                                    value,
-                                ),
-                            )
-                            .await?
-                        }
-                    }
-                    ActionTarget::AllPlayers => {
-                        for (_, player_state) in &mut lobby_state.round_state.users_states {
-                            match resource {
-                                Resource::Money => player_state.money += value,
-                                Resource::MagazineState => player_state.magazine_state += value,
-                                Resource::Performance => player_state.performance += value,
-                                Resource::BackOrderValue => player_state.back_order_sum += value,
-                            }
-                        }
-                        send_broadcast_msg(
-                            state,
-                            game_id,
-                            EventMessages::GameEventResourceAddedAll(resource, value),
-                        )
-                        .await?
-                    }
-                },
+                } => {
+                    execute_resource_action(
+                        target,
+                        &targets,
+                        lobby_state,
+                        resource,
+                        value,
+                        state,
+                        game_id,
+                    )
+                    .await?
+                }
             }
         }
     }
 
     Ok(())
+}
+
+async fn execute_resource_action(
+    target: ActionTarget,
+    players_targets: &Vec<Uuid>,
+    lobby_state: &mut LobbyState,
+    resource: Resource,
+    value: i64,
+    state: &Arc<State>,
+    game_id: Uuid,
+) -> Result<(), AppError> {
+    Ok(match target {
+        ActionTarget::EventTarget => {
+            for u_id in players_targets {
+                let mut player_state = match lobby_state.round_state.users_states.get_mut(u_id) {
+                    Some(p) => p,
+                    None => {
+                        return Err(AppError::InternalServerError(
+                            "expected user state".to_string(),
+                        ))
+                    }
+                };
+                match resource {
+                    Resource::Money => player_state.money += value,
+                    Resource::MagazineState => player_state.magazine_state += value,
+                    Resource::Performance => player_state.performance += value,
+                    Resource::BackOrderValue => player_state.back_order_sum += value,
+                }
+                send_broadcast_msg(
+                    state,
+                    game_id,
+                    EventMessages::GameEventResourceAddedUser(*u_id, resource.clone(), value),
+                )
+                .await?
+            }
+        }
+        ActionTarget::AllPlayers => {
+            for (_, player_state) in &mut lobby_state.round_state.users_states {
+                match resource {
+                    Resource::Money => player_state.money += value,
+                    Resource::MagazineState => player_state.magazine_state += value,
+                    Resource::Performance => player_state.performance += value,
+                    Resource::BackOrderValue => player_state.back_order_sum += value,
+                }
+            }
+            send_broadcast_msg(
+                state,
+                game_id,
+                EventMessages::GameEventResourceAddedAll(resource, value),
+            )
+            .await?
+        }
+    })
+}
+
+async fn execute_settings_change(
+    db: &sqlx::Pool<Postgres>,
+    lobby_state: &mut LobbyState,
+    new_settings: Settings,
+    state: &Arc<State>,
+    game_id: Uuid,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        // language=PostgreSQL
+        r#"update "lobby" set settings = $1 where id = $2"#,
+        sqlx::types::Json(&new_settings) as _,
+        game_id
+    )
+    .execute(db)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+    lobby_state.round_state.settings = new_settings.clone();
+    Ok(send_broadcast_msg(
+        state,
+        game_id,
+        EventMessages::GameEventSettingsChange(new_settings),
+    )
+    .await?)
+}
+
+async fn execute_pop_up_action(
+    target: ActionTarget,
+    players_targets: &Vec<Uuid>,
+    state: &Arc<State>,
+    game_id: Uuid,
+    message: String,
+) -> Result<(), AppError> {
+    Ok(match target {
+        ActionTarget::EventTarget => {
+            for player_id in players_targets {
+                send_broadcast_msg(
+                    state,
+                    game_id,
+                    EventMessages::GameEventPopUpUser(*player_id, message.clone()),
+                )
+                .await?
+            }
+        }
+        ActionTarget::AllPlayers => {
+            send_broadcast_msg(
+                state,
+                game_id,
+                EventMessages::GameEventPopUpAll(message.clone()),
+            )
+            .await?
+        }
+    })
+}
+
+async fn evaluate_cond(
+    event: &crate::entities::GameEvent,
+    lobby_state: &mut LobbyState,
+    db: &sqlx::Pool<Postgres>,
+    game_id: Uuid,
+) -> Result<(bool, Vec<Uuid>), AppError> {
+    let (met_by, players_targets) = match event.condition.clone() {
+        EventCondition::RoundMet { round } => evaluate_round_cond(lobby_state, round),
+        EventCondition::ValueExceed {
+            resource,
+            met_by,
+            value,
+        } => match resource {
+            Resource::Money => evaluate_value_exceed(|us| us.money, met_by, lobby_state, value),
+            Resource::MagazineState => {
+                evaluate_value_exceed(|us| us.magazine_state, met_by, lobby_state, value)
+            }
+            Resource::Performance => {
+                evaluate_value_exceed(|us| us.performance, met_by, lobby_state, value)
+            }
+            Resource::BackOrderValue => {
+                evaluate_value_exceed(|us| us.back_order_sum, met_by, lobby_state, value)
+            }
+        },
+        EventCondition::SingleChange { resource, value } => {
+            let last_state = sqlx::query_as!(GameState,
+                r#"
+                    select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
+                    from "game_state"
+                    where game_id = $1 and round = $2"#,
+                game_id,
+                lobby_state.round_state.round - 1
+            ).fetch_one(db)
+            .await
+            .map_err(|e| {
+                AppError::DbErr(e.to_string())
+            })?;
+
+            match resource {
+                Resource::Money => {
+                    evaluate_single_change(|us| us.money, lobby_state, last_state, value)
+                }
+                Resource::MagazineState => {
+                    evaluate_single_change(|us| us.magazine_state, lobby_state, last_state, value)
+                }
+                Resource::Performance => {
+                    evaluate_single_change(|us| us.performance, lobby_state, last_state, value)
+                }
+                Resource::BackOrderValue => {
+                    evaluate_single_change(|us| us.back_order_sum, lobby_state, last_state, value)
+                }
+            }
+        }
+    };
+    Ok((met_by, players_targets))
+}
+
+fn evaluate_round_cond(lobby_state: &mut LobbyState, round: i64) -> (bool, Vec<Uuid>) {
+    let mut players_id = Vec::new();
+    if lobby_state.round_state.round == round {
+        for (u_id, _) in &lobby_state.round_state.users_states {
+            players_id.push(*u_id);
+        }
+    }
+    (players_id.len() != 0, players_id)
 }
 
 //TODO: refactor name
@@ -427,8 +512,7 @@ pub async fn finish_round(
     send_broadcast_msg(state, game_id, EventMessages::RoundEnd).await?;
 
     let next_demand = generate_demand(lobby_state);
-    let next_demand_cost = lobby_state.round_state.settings.resource_price * next_demand
-        + lobby_state.round_state.settings.fix_order_cost;
+    let next_demand_cost = lobby_state.round_state.settings.resource_basic_price * next_demand;
     let generated_order = Order {
         recipient: lobby_state.round_state.flow.last_player,
         sender: Uuid::nil(),
@@ -499,7 +583,7 @@ pub async fn finish_round(
         r#"insert into "game_state" 
         (round, user_states, round_orders, send_orders, flow, demand, game_id) 
         values ($1, $2, $3, $4, $5, $6, $7) 
-        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", game_id "#,
+        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id "#,
         lobby_state.round_state.round,
         sqlx::types::Json(&lobby_state.round_state.users_states) as _,
         sqlx::types::Json(&lobby_state.round_state.round_orders) as _,
@@ -520,7 +604,7 @@ pub async fn finish_round(
     } else {
         new_round(game_id, lobby_state, state, db).await?;
     }
-    
+
     Ok(())
 }
 
@@ -550,8 +634,16 @@ pub async fn finish_game(
     state: &Arc<State>,
     db: &PgPool,
 ) -> Result<(), AppError> {
-
-    let stats_types = UserStats{ required_stats: vec![UserStatsType::Money, UserStatsType::MagazineState, UserStatsType::BackOrder, UserStatsType::PlacedOrder, UserStatsType::Performance, UserStatsType::SpentMoney] };
+    let stats_types = UserStats {
+        required_stats: vec![
+            UserStatsType::Money,
+            UserStatsType::MagazineState,
+            UserStatsType::BackOrder,
+            UserStatsType::PlacedOrder,
+            UserStatsType::Performance,
+            UserStatsType::SpentMoney,
+        ],
+    };
     let stats = get_player_stats(game_id, db, stats_types).await?;
     let msg = GameEnd {
         player_states: lobby_state.round_state.users_states.clone(),
@@ -567,6 +659,7 @@ pub async fn start_new_game(
     id: Uuid,
     lobby: Lobby,
     players: Vec<User>,
+    players_classes: BTreeMap<Uuid, u32>,
     state: &Arc<State>,
 ) -> Result<(), AppError> {
     let init_orders: BTreeMap<Uuid, Order> = BTreeMap::new();
@@ -575,14 +668,44 @@ pub async fn start_new_game(
     let init_send_order: BTreeMap<Uuid, Order> = BTreeMap::new();
 
     for player in &players {
+        let player_class;
+        match players_classes.get(&player.id) {
+            Some(c) => player_class = c,
+            None => return Err(AppError::BadRequest("Player not found".to_string())),
+        };
+
+        let start_money;
+        match lobby.settings.start_money.get(&player_class) {
+            Some(c) => start_money = c,
+            None => return Err(AppError::BadRequest("Player not found".to_string())),
+        }
+
+        let start_magazine;
+        match lobby.settings.start_magazine.get(&player_class) {
+            Some(c) => start_magazine = c,
+            None => return Err(AppError::BadRequest("Player not found".to_string())),
+        }
+
+        let incoming_orders;
+        match lobby.settings.start_order_queue.get(&player_class) {
+            Some(c) => incoming_orders = c.clone(),
+            None => return Err(AppError::BadRequest("Player not found".to_string())),
+        }
+
+        let requested_orders;
+        match lobby.settings.start_order_queue.get(&player_class) {
+            Some(c) => requested_orders = c.clone(),
+            None => return Err(AppError::BadRequest("Player not found".to_string())),
+        }
+
         let user_state = UserState {
             user_id: player.id,
-            money: lobby.settings.start_money,
+            money: *start_money,
             spent_money: 0,
-            magazine_state: lobby.settings.start_magazine,
+            magazine_state: *start_magazine,
             performance: 0, //TODO, fill with performance
-            incoming_orders: lobby.settings.start_order_queue.clone(),
-            requested_orders: lobby.settings.start_order_queue.clone(),
+            incoming_orders: incoming_orders,
+            requested_orders: requested_orders,
             back_order_sum: 0,
             placed_order: Order::default(),
             received_order: Order::default(),
@@ -594,15 +717,15 @@ pub async fn start_new_game(
 
     let flow = redistribute_flow(&players)?;
     let demand = match &lobby.settings.demand_style {
-        crate::entities::DemandStyle::Default => 10,
-        crate::entities::DemandStyle::Linear { start, increase: _ } => *start,
-        crate::entities::DemandStyle::Multiplication { start, increase: _ } => *start,
-        crate::entities::DemandStyle::Exponential {
+        crate::entities::GeneratedOrderStyle::Default => 10,
+        crate::entities::GeneratedOrderStyle::Linear { start, increase: _ } => *start,
+        crate::entities::GeneratedOrderStyle::Multiplication { start, increase: _ } => *start,
+        crate::entities::GeneratedOrderStyle::Exponential {
             start,
             power: _,
             modulator: _,
         } => *start,
-        crate::entities::DemandStyle::List { demand } => match demand.first() {
+        crate::entities::GeneratedOrderStyle::List { list: demand } => match demand.first() {
             Some(d) => *d,
             None => return Err(AppError::BadRequest("bad list demand".to_string())),
         },
@@ -611,14 +734,15 @@ pub async fn start_new_game(
     sqlx::query_as!(GameState,
         // language=PostgreSQL
         r#"insert into "game_state" 
-        (round, user_states, round_orders, send_orders, flow, demand, game_id) 
-        values ($1, $2, $3, $4, $5, $6, $7) 
-        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", game_id "#,
+        (round, user_states, round_orders, send_orders, flow, players_classes, demand, game_id) 
+        values ($1, $2, $3, $4, $5, $6, $7, $8) 
+        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>",game_id "#,
         0,
         sqlx::types::Json(&init_players_states) as _,
         sqlx::types::Json(init_orders) as _,
         sqlx::types::Json(init_send_order) as _,
         sqlx::types::Json(&flow) as _,
+        sqlx::types::Json(&players_classes) as _,
         demand,
         id
     )
@@ -636,6 +760,7 @@ pub async fn start_new_game(
             lobby_state.round_state.players_finished = 0;
             lobby_state.round_state.users_states = init_players_states.clone();
             lobby_state.round_state.settings = lobby.settings.0.clone();
+            lobby_state.round_state.player_classes = players_classes;
         }
         None => {
             return Err(AppError::InternalServerError(
@@ -697,21 +822,21 @@ fn redistribute_flow(players: &Vec<User>) -> Result<Flow, AppError> {
 
 fn generate_demand(lobby_state: &LobbyState) -> i64 {
     match &lobby_state.round_state.settings.demand_style {
-        crate::entities::DemandStyle::Default => {
+        crate::entities::GeneratedOrderStyle::Default => {
             (lobby_state.round_state.demand as f64 * 1.5) as i64
         }
-        crate::entities::DemandStyle::Linear { start: _, increase } => {
+        crate::entities::GeneratedOrderStyle::Linear { start: _, increase } => {
             lobby_state.round_state.demand + increase
         }
-        crate::entities::DemandStyle::Multiplication { start: _, increase } => {
+        crate::entities::GeneratedOrderStyle::Multiplication { start: _, increase } => {
             lobby_state.round_state.demand * increase
         }
-        crate::entities::DemandStyle::Exponential {
+        crate::entities::GeneratedOrderStyle::Exponential {
             start: _,
             power,
             modulator,
         } => lobby_state.round_state.demand * (modulator * (E.powi(*power as i32)) as i64),
-        crate::entities::DemandStyle::List { demand } => {
+        crate::entities::GeneratedOrderStyle::List { list: demand } => {
             let index = match demand
                 .iter()
                 .position(|&r| r == lobby_state.round_state.demand)

@@ -12,7 +12,9 @@ use crate::{
     auth::{Auth, AuthAdmin},
     entities::{Lobby, User, UserRole},
     error::AppError,
-    lobby::lobby::{get_lobby_users_transaction, get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
+    lobby::lobby::{
+        get_lobby_transaction, get_lobby_users_transaction, send_broadcast_msg, LobbyUserUpdate,
+    },
     user::user::{
         connect_user, create_user, generate_password, generate_username, lock_lobby_tables,
         lock_user_tables, quick_connect, update_user_password,

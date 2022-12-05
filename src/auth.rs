@@ -52,14 +52,6 @@ pub struct AuthTemp {
     pub exp: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AuthGameAdmin {
-    pub username: String,
-    pub user_id: Uuid,
-    pub role: UserRole,
-    pub exp: usize,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AuthBody {
     pub access_token: String,
@@ -207,41 +199,6 @@ where
             .map_err(|_| AppError::InvalidToken)?;
 
         let auth = AuthTemp {
-            username: token_data.claims.username,
-            user_id: token_data.claims.user_id,
-            exp: token_data.claims.exp,
-            role: token_data.claims.role,
-        };
-
-        Ok(auth)
-    }
-}
-
-#[async_trait]
-impl<B> FromRequest<B> for AuthGameAdmin
-where
-    B: Send,
-{
-    type Rejection = AppError;
-
-    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        // Extract the token from the authorization header
-        let TypedHeader(Authorization(bearer)) =
-            TypedHeader::<Authorization<Bearer>>::from_request(req)
-                .await
-                .map_err(|_| AppError::InvalidToken)?;
-
-        let token_data = decode::<Auth>(bearer.token(), &KEYS.decoding, &Validation::default())
-            .map_err(|_| AppError::InvalidToken)?;
-
-        if token_data.claims.role != UserRole::Admin
-            && token_data.claims.role != UserRole::GameAdmin
-        {
-            //TODO: pass correct string
-            return Err(AppError::Unauthorized("".to_string()));
-        }
-
-        let auth = AuthGameAdmin {
             username: token_data.claims.username,
             user_id: token_data.claims.user_id,
             exp: token_data.claims.exp,

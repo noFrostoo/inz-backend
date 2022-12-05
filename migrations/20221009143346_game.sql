@@ -6,6 +6,7 @@ create table "game_state"
     user_states     jsonb not null,
     round_orders    jsonb not null,
     send_orders     jsonb not null,
+    players_classes jsonb not null,
     flow            jsonb not null,
     demand          BIGINT not null,
     game_id         uuid   not null
