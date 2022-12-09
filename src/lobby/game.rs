@@ -666,6 +666,7 @@ pub async fn start_new_game(
     let mut init_players_states: BTreeMap<Uuid, UserState> = BTreeMap::new();
     let players_count = players.len() as i64;
     let init_send_order: BTreeMap<Uuid, Order> = BTreeMap::new();
+    let flow = redistribute_flow(&players)?;
 
     for player in &players {
         let player_class;
@@ -686,17 +687,60 @@ pub async fn start_new_game(
             None => return Err(AppError::BadRequest("Player not found".to_string())),
         }
 
-        let incoming_orders;
+        let incoming_orders_values;
         match lobby.settings.start_order_queue.get(&player_class) {
-            Some(c) => incoming_orders = c.clone(),
+            Some(c) => incoming_orders_values = c.clone(),
             None => return Err(AppError::BadRequest("Player not found".to_string())),
         }
 
-        let requested_orders;
+        
+        let mut sender_id: Uuid = Uuid::new_v4();
+        let mut found = false;
+        for (sender, recipient) in &flow.flow {
+            if *recipient == player.id {
+                sender_id = *sender;
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            return Err(AppError::BadRequest("bad flow ".to_string()));
+        }
+
+
+        let mut incoming_orders: Vec<Order> = Vec::new();
+        for incoming_order in incoming_orders_values {
+            incoming_orders.push(Order{ 
+                recipient: player.id, 
+                sender: sender_id, 
+                value: incoming_order, 
+                cost: lobby.settings.resource_basic_price * incoming_order 
+            })
+        }
+
+        let requested_orders_values;
         match lobby.settings.start_order_queue.get(&player_class) {
-            Some(c) => requested_orders = c.clone(),
+            Some(c) => requested_orders_values = c.clone(),
             None => return Err(AppError::BadRequest("Player not found".to_string())),
         }
+
+        let recipient = match flow.flow.get(&player.id) {
+            Some(p) => p,
+            None => return Err(AppError::BadRequest("bad flow, no player recipient found".to_string())),
+        };
+
+        let mut requested_orders: Vec<Order> = Vec::new();
+        for requested_order in requested_orders_values {
+            requested_orders.push(Order{ 
+                recipient: *recipient, 
+                sender: player.id, 
+                value: requested_order, 
+                cost: lobby.settings.resource_basic_price * requested_order 
+            })
+        }
+
+
 
         let user_state = UserState {
             user_id: player.id,
@@ -715,7 +759,7 @@ pub async fn start_new_game(
         init_players_states.insert(player.id, user_state);
     }
 
-    let flow = redistribute_flow(&players)?;
+    
     let demand = match &lobby.settings.demand_style {
         crate::entities::GeneratedOrderStyle::Default => 10,
         crate::entities::GeneratedOrderStyle::Linear { start, increase: _ } => *start,

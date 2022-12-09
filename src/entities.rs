@@ -44,7 +44,7 @@ pub struct Settings {
     pub max_rounds: i64,
     pub show_stats_for_users: bool,
     pub user_classes: Vec<u32>,
-    pub start_order_queue: BTreeMap<u32, Vec<Order>>,
+    pub start_order_queue: BTreeMap<u32, Vec<i64>>,
     pub demand_style: GeneratedOrderStyle,
     pub supply_style: GeneratedOrderStyle,
     pub unlimited_money: bool,

@@ -28,7 +28,7 @@ use super::user::{get_user, ConnectUser, CreateUser, QuickConnect, UpdateUser};
 pub async fn create_user_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateUser>,
-    _auth: AuthAdmin,
+    // _auth: AuthAdmin,
 ) -> Result<Json<User>, AppError> {
     let mut tx = db
         .begin()
