@@ -186,7 +186,7 @@ pub async fn update_template_endpoint(
     Json(payload): Json<CreateTemplate>,
     auth: AuthAdmin,
 ) -> Result<Json<Template>, AppError> {
-    let old = get_lobby(id, db).await?;
+    let old = get_template(id, db).await?;
 
     if old.owner_id != auth.user_id && auth.role != UserRole::Admin {
         return Err(AppError::Unauthorized(
@@ -196,11 +196,12 @@ pub async fn update_template_endpoint(
 
     let template = sqlx::query_as!(Template,
         // language=PostgreSQL
-        r#"update "template" set name = $1, max_players = $2, settings = $3, events = $4 returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
+        r#"update "template" set name = $1, max_players = $2, settings = $3, events = $4 where id = $5 returning id, name, max_players, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>""#,
         payload.name,
         payload.max_players,
         sqlx::types::Json(payload.settings) as _,
-        sqlx::types::Json(payload.events) as _
+        sqlx::types::Json(payload.events) as _,
+        id,
     )
     .fetch_one(db)
     .await
