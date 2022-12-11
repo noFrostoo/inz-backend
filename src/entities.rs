@@ -98,11 +98,12 @@ pub struct GameEvent {
     pub name: String,
     pub condition: EventCondition,
     pub actions: Vec<EventAction>,
-    pub recipients: EventsRecipients,
+    // pub recipients: EventsRecipients,
     pub run_once: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(tag = "type")]
 pub enum EventCondition {
     RoundMet {
         round: i64,
@@ -127,6 +128,7 @@ pub enum Resource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[serde(tag = "type")]
 pub enum EventAction {
     ShowMessage {
         message: String,
@@ -146,7 +148,6 @@ pub enum EventAction {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub enum MetBy {
     SinglePlayer,
-    PlayerPercent(usize),
     Average,
     AllPlayers,
 }
@@ -165,7 +166,7 @@ pub enum ActionTarget {
     AllPlayers,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash, FromRow)]
 pub struct GameState {
     pub id: Uuid,
     pub round: i64,

@@ -85,7 +85,7 @@ pub async fn get_player_stats(
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     let mut stats = HashMap::new();
-    
+
     for stats_type in stats_types.required_stats {
         match stats_type {
             UserStatsType::Money => {

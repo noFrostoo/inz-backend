@@ -16,14 +16,14 @@ use axum::{
     Router,
 };
 use axum_typed_websockets::WebSocketUpgrade;
-use entities::{Flow, Order, Settings, UserState};
+use entities::{Flow, Order, Settings, UserState, Lobby, GameState};
 use hyper::Method;
 use lobby::{
     lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint},
     stats::{game_stats, players_stats},
 };
 use once_cell::sync::Lazy;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{postgres::PgPoolOptions, PgPool, QueryBuilder};
 use std::{
     collections::{BTreeMap, HashMap},
     env,
@@ -58,6 +58,7 @@ use crate::template::{
     get_templates_endpoint, update_template_endpoint,
 };
 
+#[derive(Debug)]
 pub struct LobbyState {
     sender: Arc<sync::broadcast::Sender<EventMessages>>,
     _receiver: Arc<sync::broadcast::Receiver<EventMessages>>,
@@ -65,6 +66,7 @@ pub struct LobbyState {
     round_state: RoundState,
 }
 
+#[derive(Debug)]
 pub struct RoundState {
     round: i64,
     players: i64,
@@ -126,6 +128,8 @@ async fn main() {
     let state = Arc::new(State {
         lobbies: tokio::sync::RwLock::new(HashMap::new()),
     });
+
+    restore_lobbies(&state, &db).await;
 
     let app = create_app(db, state);
 
@@ -215,4 +219,60 @@ pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
                 .layer(Extension(state))
                 .layer(cors), //can add cookie management here
         )
+}
+
+async fn restore_lobbies(state: &Arc<State>, db: &PgPool) {
+    let mut builder = QueryBuilder::new("select * from \"lobby\" ");
+
+    let query = builder.build_query_as::<Lobby>();
+
+    let lobbies = match query
+        .fetch_all(db)
+        .await {
+            Ok(l) => l,
+            Err(e) => panic!("couldn't get lobbies {}", e),
+        }
+    ;
+    for lobby in lobbies {
+        if lobby.started {
+            builder = QueryBuilder::new(format!("select * from \"game_state\" where game_id = {} order by round DESC", lobby.id));
+
+            let query = builder.build_query_as::<GameState>();
+
+            let game_state = match query
+                .fetch_one(db)
+                .await {
+                    Ok(l) => l,
+                    Err(e) => panic!("couldn't get game state {}", e),
+                };
+
+            let (tx, rx) = sync::broadcast::channel(33);
+            state.lobbies.write().await.insert(lobby.id, LobbyState { 
+                sender: Arc::new(tx), 
+                _receiver: Arc::new(rx), 
+                started: false, 
+                round_state: RoundState{
+                    round: game_state.round,
+                    players: game_state.players_classes.0.len() as i64,
+                    players_finished: game_state.players_classes.0.len() as i64,
+                    users_states: game_state.user_states.0,
+                    round_orders: game_state.round_orders.0,
+                    send_orders: game_state.send_orders.0,
+                    player_classes: game_state.players_classes.0,
+                    settings: lobby.settings.0,
+                    flow: game_state.flow.0,
+                    demand: game_state.demand,
+                }
+            });
+        } else {
+            //TODO: magic number fix
+            let (tx, rx) = sync::broadcast::channel(33);
+            state.lobbies.write().await.insert(lobby.id, LobbyState { 
+                sender: Arc::new(tx), 
+                _receiver: Arc::new(rx), 
+                started: false, 
+                round_state: RoundState::new()
+            });
+        }
+    }
 }

@@ -37,6 +37,8 @@ pub enum LobbiesType {
 #[derive(Serialize, Deserialize)]
 pub struct LobbiesQuery {
     pub lobby_type: LobbiesType,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -108,6 +110,7 @@ pub async fn create_lobby(
         return Err(AppError::NotFound("Looby already created".to_string()));
     }
 
+    //TODO: magic number fix
     let (tx, rx) = sync::broadcast::channel(33);
     state.lobbies.write().await.insert(
         lobby.id,
@@ -333,6 +336,8 @@ pub async fn send_broadcast_msg(
     id: Uuid,
     msg: EventMessages,
 ) -> Result<(), AppError> {
+    print!("lobbies: {:?}", state.lobbies.read().await);
+
     match state.lobbies.read().await.get(&id) {
         Some(lobby_state) => {
             lobby_state

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::{Auth, AuthAdmin},
-    entities::{Lobby, UserRole},
+    entities::{Lobby, User, UserRole},
     error::AppError,
     user::user::lock_lobby_tables,
     websockets::EventMessages,
@@ -66,7 +66,7 @@ pub async fn get_lobby_endpoint(
 pub async fn get_lobbies_endpoint(
     Extension(ref db): Extension<PgPool>,
     Query(lobby_query): Query<LobbiesQuery>,
-    _auth: Auth,
+    auth: Auth,
 ) -> Result<Json<Vec<Lobby>>, AppError> {
     let mut builder = QueryBuilder::new("select * from \"lobby\" ");
 
@@ -75,9 +75,21 @@ pub async fn get_lobbies_endpoint(
             builder.push("where public = true");
         }
         LobbiesType::Private => {
+            if auth.role != UserRole::Admin {
+                return Err(AppError::Unauthorized("only admin can do this".to_string()));
+            }
+
             builder.push("where public = false");
         }
         LobbiesType::All => {}
+    }
+
+    if let Some(l) = lobby_query.limit {
+        builder.push(format!(" limit {} ", l));
+    }
+
+    if let Some(o) = lobby_query.offset {
+        builder.push(format!(" offset {} ", o));
     }
 
     print!("{}", builder.sql());
@@ -114,9 +126,9 @@ pub async fn delete_lobby_endpoint(
     }
 
     if lobby.started {
-        return Err(AppError::BadRequest("Game started".to_string()))
+        return Err(AppError::BadRequest("Game started".to_string()));
     }
-    
+
     // just to be sure
     send_broadcast_msg(&state, id, EventMessages::KickAll).await?;
 
