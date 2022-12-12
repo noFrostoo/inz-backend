@@ -234,6 +234,7 @@ async fn restore_lobbies(state: &Arc<State>, db: &PgPool) {
         }
     ;
     for lobby in lobbies {
+        print!("{}", lobby.id);
         if lobby.started {
             builder = QueryBuilder::new(format!("select * from \"game_state\" where game_id = {} order by round DESC", lobby.id));
 

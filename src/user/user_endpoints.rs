@@ -235,7 +235,7 @@ pub async fn disconnect_user_endpoint(
 
     send_broadcast_msg(
         &state,
-        id,
+        game_id,
         EventMessages::UserDisconnected(LobbyUserUpdate {
             game_id,
             user,
