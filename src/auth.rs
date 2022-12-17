@@ -29,6 +29,14 @@ pub struct Auth {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct WebSocketAuth {
+    pub username: String,
+    pub user_id: Uuid,
+    pub role: UserRole,
+    pub exp: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AuthAdmin {
     pub username: String,
     pub user_id: Uuid,
@@ -147,6 +155,43 @@ where
         Ok(token_data.claims)
     }
 }
+
+#[async_trait]
+impl<B> FromRequest<B> for WebSocketAuth
+where
+    B: Send,
+{
+    type Rejection = AppError;
+
+    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+        let header = match req.headers().get("Sec-WebSocket-Protocol") {
+            Some(h) => h,
+            None => return Err(AppError::InvalidToken)
+        };
+
+        let string_val = header.to_str().map_err(|_| AppError::InvalidToken)?;
+        let mut splitted = string_val.split(",");
+
+        if splitted.next() != Some("access_token") {
+            return Err(AppError::InvalidToken)
+        }
+
+        let token = match splitted.next() {
+            Some(t) => t.trim(),
+            None => return Err(AppError::InvalidToken)
+        };
+        
+        tracing::info!("token: {}", token);
+
+        let token_data = decode::<WebSocketAuth>(token, &KEYS.decoding, &Validation::default())
+            .map_err(|_| AppError::InvalidToken)?;
+
+        tracing::info!("WEBsocet connected");
+
+        Ok(token_data.claims)
+    }
+}
+
 
 #[async_trait]
 impl<B> FromRequest<B> for AuthAdmin

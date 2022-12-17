@@ -218,8 +218,6 @@ pub async fn disconnect_user_endpoint(
 
     let game_id = user.game_id.unwrap();
 
-    let users = get_lobby_users_transaction(game_id, &mut tx).await?;
-
     event!(Level::INFO, "Disconnecting user: {}", id);
 
     sqlx::query!(
@@ -230,6 +228,8 @@ pub async fn disconnect_user_endpoint(
     .execute(db)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    let users = get_lobby_users_transaction(game_id, &mut tx).await?;
 
     event!(Level::DEBUG, "Disconnected user: {}, sending msg", id);
 

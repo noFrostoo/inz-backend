@@ -8,7 +8,7 @@ mod template;
 mod user;
 mod websockets;
 
-use auth::Auth;
+use auth::{Auth, WebSocketAuth};
 use axum::{
     extract::Extension,
     response::IntoResponse,
@@ -150,7 +150,7 @@ async fn websocket_handler(
     ws: WebSocketUpgrade<ServerMessage, ClientMessage>,
     Extension(state): Extension<Arc<State>>,
     Extension(ref db): Extension<PgPool>,
-    auth: Auth,
+    auth: WebSocketAuth,
 ) -> impl IntoResponse {
     let db_clone = db.clone();
     ws.on_upgrade(|socket| game_process(socket, state, db_clone, auth))

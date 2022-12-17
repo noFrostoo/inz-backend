@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    auth::Auth,
+    auth::{Auth, WebSocketAuth},
     entities::{Resource, Settings},
     error::AppError,
     lobby::{
@@ -78,7 +78,7 @@ pub async fn game_process(
     socket: WebSocket<ServerMessage, ClientMessage>,
     state: Arc<State>,
     db: PgPool,
-    auth: Auth,
+    auth: WebSocketAuth,
 ) {
     let (mut sender, mut receiver) = socket.split();
     let tx;
