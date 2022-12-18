@@ -9,17 +9,16 @@ use tracing::{event, Level};
 use uuid::Uuid;
 
 use crate::{
-    auth::{Auth, AuthAdmin},
+    auth::{Auth},
     entities::{Lobby, User, UserRole},
     error::AppError,
     lobby::lobby::{
-        get_lobby_transaction, get_lobby_users_transaction, send_broadcast_msg, LobbyUserUpdate,
+        get_lobby_transaction,
     },
     user::user::{
         connect_user, create_user, generate_password, generate_username, lock_lobby_tables,
-        lock_user_tables, quick_connect, update_user_password,
+        lock_user_tables, quick_connect, update_user_password, disconnect_user
     },
-    websockets::EventMessages,
     State,
 };
 
@@ -205,53 +204,7 @@ pub async fn disconnect_user_endpoint(
     Extension(state): Extension<Arc<State>>,
     _auth: Auth,
 ) -> Result<(), AppError> {
-    let mut tx = db
-        .begin()
-        .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
-
-    let user = get_user(id, &mut tx).await?;
-
-    if user.game_id.is_none() {
-        return Err(AppError::NotConnected);
-    }
-
-    let game_id = user.game_id.unwrap();
-
-    event!(Level::INFO, "Disconnecting user: {}", id);
-
-    sqlx::query!(
-        // language=PostgreSQL
-        r#"update "user" set game_id = NULL where id = $1"#,
-        id
-    )
-    .execute(db)
-    .await
-    .map_err(|e| AppError::DbErr(e.to_string()))?;
-
-    let users = get_lobby_users_transaction(game_id, &mut tx).await?;
-
-    event!(Level::DEBUG, "Disconnected user: {}, sending msg", id);
-
-    send_broadcast_msg(
-        &state,
-        game_id,
-        EventMessages::UserDisconnected(LobbyUserUpdate {
-            game_id,
-            user,
-            users_count: users.len(),
-            users,
-        }),
-    )
-    .await?;
-
-    event!(Level::DEBUG, "Disconnected user: {}, committing...", id);
-
-    tx.commit()
-        .await
-        .map_err(|e| AppError::DbErr(e.to_string()))?;
-
-    Ok(())
+    disconnect_user(id, db, &state).await
 }
 
 pub async fn quick_connect_endpoint(

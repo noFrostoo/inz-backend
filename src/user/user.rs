@@ -7,14 +7,14 @@ use argon2::{
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, Postgres, Transaction};
+use sqlx::{Executor, Postgres, Transaction, PgPool};
 use tracing::{event, Level};
 use uuid::Uuid;
 
 use crate::{
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
-    lobby::lobby::{get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate},
+    lobby::lobby::{get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate, get_lobby_users},
     websockets::EventMessages,
     State,
 };
@@ -242,6 +242,48 @@ pub async fn connect_user(
 
     Ok(params.game_id)
 }
+
+pub async fn disconnect_user(id: Uuid, db: &PgPool, state: &Arc<State>) -> Result<(), AppError> {
+    let user = get_user(id, db).await?;
+
+    if user.game_id.is_none() {
+        return Err(AppError::NotConnected);
+    }
+    
+    let game_id = user.game_id.unwrap();
+
+    event!(Level::INFO, "Disconnecting user: {}", id);
+
+    sqlx::query!(
+        // language=PostgreSQL
+        r#"update "user" set game_id = NULL where id = $1"#,
+        id
+    )
+    .execute(db)
+    .await
+    .map_err(|e| AppError::DbErr(e.to_string()))?;
+
+    let users = get_lobby_users(game_id, db).await?;
+
+    event!(Level::DEBUG, "Disconnected user: {}, sending msg", id);
+
+    send_broadcast_msg(
+        &state,
+        game_id,
+        EventMessages::UserDisconnected(LobbyUserUpdate {
+            game_id,
+            user,
+            users_count: users.len(),
+            users,
+        }),
+    )
+    .await?;
+
+    event!(Level::DEBUG, "Disconnected user: {}", id);
+
+    Ok(())
+}
+
 
 pub async fn lock_user_tables<'a, E>(db: E) -> Result<(), AppError>
 where

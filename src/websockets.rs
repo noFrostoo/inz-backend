@@ -13,7 +13,7 @@ use crate::{
         game::{process_user_round_end_message, GameEnd, GameUpdate, UserEndRound},
         lobby::{send_broadcast_msg, LobbyUpdate, LobbyUserUpdate},
     },
-    user::user::get_user,
+    user::user::{get_user, disconnect_user},
     State,
 };
 //TODO: learn more about it
@@ -190,7 +190,14 @@ pub async fn game_process(
                     }
                     Message::Ping(_) => todo!(),
                     Message::Pong(_) => todo!(),
-                    Message::Close(_) => todo!(),
+                    Message::Close(_) => { 
+                        match disconnect_user(user.id, &db, &state).await {
+                            Ok(_) => tracing::info!("disconnect  {}", user.id),
+                            Err(e) => tracing::error!("error while receiving client  {}", e.to_string())
+                        }
+
+                        break;
+                    },
                 },
                 Err(e) => {
                     tracing::error!("error while receiving client  {}", e.to_string());
