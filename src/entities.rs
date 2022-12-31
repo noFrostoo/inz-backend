@@ -6,6 +6,8 @@ use sqlx::{
     FromRow,
 };
 
+use crate::error::AppError;
+
 #[derive(sqlx::Type, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[sqlx(type_name = "user_role")]
 #[sqlx(rename_all = "lowercase")]
@@ -184,6 +186,41 @@ pub struct Flow {
     pub last_player: Uuid,
     pub first_player: Uuid,
     pub flow: BTreeMap<Uuid, Uuid>,
+}
+
+impl Flow {
+    pub fn get_recipient(&self, player: &Uuid) -> Result<Uuid, AppError> {
+        if *player == self.last_player {
+            return Ok(Uuid::nil());
+        }
+
+        match self.flow.get(player) {
+            Some(r) => return Ok(*r),
+            None => return Err(AppError::BadRequest("not found recipient in flow".to_string())),
+        }
+    }
+
+    pub fn get_sender(&self, player: &Uuid) -> Result<Uuid, AppError> {
+        let mut sender_id: &Uuid = &Uuid::new_v4();
+        let mut found = false;
+        for (sender, recipient) in &self.flow {
+            if recipient == player {
+                sender_id = sender;
+                found = true;
+                break;
+            }
+        }
+
+        if self.first_player == *player {
+            found = true;
+        }
+
+        if !found {
+            return Err(AppError::BadRequest("not found".to_string()));
+        }
+
+        return Ok(*sender_id);
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]

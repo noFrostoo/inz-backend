@@ -28,12 +28,22 @@ pub struct Auth {
     pub exp: usize,
 }
 
+
 #[derive(Debug, Serialize, Deserialize)]
+struct WebSocketAuthInner {
+    pub username: String,
+    pub user_id: Uuid,
+    pub role: UserRole,
+    pub exp: usize,
+}
+
+#[derive(Debug, Serialize, Clone, Deserialize)]
 pub struct WebSocketAuth {
     pub username: String,
     pub user_id: Uuid,
     pub role: UserRole,
     pub exp: usize,
+    pub token: String
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -164,6 +174,7 @@ where
     type Rejection = AppError;
 
     async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+        print!("AAAAAAAAAAAAAAAAAAAAAAa");
         let header = match req.headers().get("Sec-WebSocket-Protocol") {
             Some(h) => h,
             None => return Err(AppError::InvalidToken)
@@ -183,12 +194,20 @@ where
         
         tracing::info!("token: {}", token);
 
-        let token_data = decode::<WebSocketAuth>(token, &KEYS.decoding, &Validation::default())
+        let token_data = decode::<WebSocketAuthInner>(token, &KEYS.decoding, &Validation::default())
             .map_err(|_| AppError::InvalidToken)?;
 
-        tracing::info!("WEBsocet connected");
+        tracing::info!("WEBsocet connected"); 
 
-        Ok(token_data.claims)
+        let auth = WebSocketAuth {
+            token: token.to_string(),
+            username: token_data.claims.username,
+            user_id: token_data.claims.user_id,
+            role: token_data.claims.role,
+            exp: token_data.claims.exp
+        };
+
+        Ok(auth)
     }
 }
 

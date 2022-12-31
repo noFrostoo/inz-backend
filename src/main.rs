@@ -15,9 +15,10 @@ use axum::{
     routing::{get, post, put},
     Router,
 };
+use axum_server::tls_rustls::RustlsConfig;
 use axum_typed_websockets::WebSocketUpgrade;
 use entities::{Flow, Order, Settings, UserState, Lobby, GameState};
-use hyper::Method;
+use hyper::{Method, header};
 use lobby::{
     lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint},
     stats::{game_stats, players_stats},
@@ -28,7 +29,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     env,
     net::SocketAddr,
-    sync::Arc,
+    sync::Arc, path::PathBuf,
 };
 use tokio::sync;
 use tower::ServiceBuilder;
@@ -131,12 +132,23 @@ async fn main() {
 
     restore_lobbies(&state, &db).await;
 
+    let config = RustlsConfig::from_pem_file(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("certs")
+            .join("cert.pem"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("certs")
+            .join("key.pem"),
+    )
+    .await
+    .unwrap();
+
     let app = create_app(db, state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     tracing::debug!("listening on {}", addr);
 
-    axum::Server::bind(&addr)
+    axum_server::bind_rustls(addr, config)
         .serve(app.into_make_service())
         .await
         .unwrap();
@@ -153,7 +165,11 @@ async fn websocket_handler(
     auth: WebSocketAuth,
 ) -> impl IntoResponse {
     let db_clone = db.clone();
-    ws.on_upgrade(|socket| game_process(socket, state, db_clone, auth))
+    let token = auth.token.clone();
+    let mut r = ws.map(|w| {w.protocols([header::SEC_WEBSOCKET_PROTOCOL.to_string()])}).on_upgrade(|socket| game_process(socket, state, db_clone, auth)).into_response();
+    r.headers_mut().insert(header::SEC_WEBSOCKET_PROTOCOL, token.parse().unwrap());
+    print!("{:?}", r);
+    r
 }
 
 pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
@@ -236,16 +252,15 @@ async fn restore_lobbies(state: &Arc<State>, db: &PgPool) {
     for lobby in lobbies {
         print!("{}", lobby.id);
         if lobby.started {
-            builder = QueryBuilder::new(format!("select * from \"game_state\" where game_id = {} order by round DESC", lobby.id));
-
-            let query = builder.build_query_as::<GameState>();
-
-            let game_state = match query
-                .fetch_one(db)
-                .await {
-                    Ok(l) => l,
-                    Err(e) => panic!("couldn't get game state {}", e),
-                };
+            let game_state = sqlx::query_as!(GameState,
+                r#"
+                    select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
+                    from "game_state"
+                    where game_id = $1"#,
+                    lobby.id,
+            ).fetch_one(db)
+            .await
+            .unwrap();
 
             let (tx, rx) = sync::broadcast::channel(33);
             state.lobbies.write().await.insert(lobby.id, LobbyState { 

@@ -208,7 +208,7 @@ pub async fn start_game_endpoint(
         true,
         id
     )
-    .fetch_one(&mut *tx)
+    .execute(&mut *tx)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
@@ -248,7 +248,7 @@ pub async fn stop_game_endpoint(
         false,
         id
     )
-    .fetch_one(&mut *tx)
+    .execute(&mut *tx)
     .await
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 

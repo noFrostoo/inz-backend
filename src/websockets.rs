@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, sync::Arc};
+use std::{borrow::BorrowMut, sync::Arc, collections::BTreeMap};
 
 use axum_typed_websockets::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use crate::{
     error::AppError,
     lobby::{
         game::{process_user_round_end_message, GameEnd, GameUpdate, UserEndRound},
-        lobby::{send_broadcast_msg, LobbyUpdate, LobbyUserUpdate},
+        lobby::{send_broadcast_msg, LobbyUpdate, LobbyUserUpdate, update_lobby_classes},
     },
     user::user::{get_user, disconnect_user},
     State,
@@ -37,9 +37,12 @@ pub enum EventMessages {
     RoundEnd,
     KickAll,
     GameEnd(GameEnd),
+    UpdateClasses(BTreeMap<Uuid, u32>),
     Ack(Uuid),
     ErrorUser(Uuid, AppError),
     Error(AppError),
+    Ping(Vec<u8>),
+    Pong(Vec<u8>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,13 +59,17 @@ pub enum ServerMessage {
     GameEventResource(Resource, i64),
     KickAll,
     GameEnd(GameEnd),
+    UpdateClasses(BTreeMap<Uuid, u32>),
     Ack,
+    Ping(Vec<u8>),
+    Pong(Vec<u8>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMessage {
     Error(String), //TODO:
     RoundEnd(UserEndRound),
+    UpdateClasses(BTreeMap<Uuid, u32>)
 }
 
 async fn send_err(
@@ -161,6 +168,9 @@ pub async fn game_process(
                 }
                 EventMessages::GameEventPopUpAll(s) => ServerMessage::GameEventPopUp(s),
                 EventMessages::RoundEnd => ServerMessage::RoundEnd,
+                EventMessages::UpdateClasses(c) => ServerMessage::UpdateClasses(c),
+                EventMessages::Ping(m) => ServerMessage::Ping(m),
+                EventMessages::Pong(m) => ServerMessage::Pong(m),
             };
 
             send_msg(&mut sender, message).await;
@@ -188,8 +198,18 @@ pub async fn game_process(
                             }
                         };
                     }
-                    Message::Ping(_) => todo!(),
-                    Message::Pong(_) => todo!(),
+                    Message::Ping(m) => { 
+                        match send_broadcast_msg(&state, game_id, EventMessages::Ping(m)).await {
+                            Ok(()) => tracing::info!("disconnect  {}", user.id),
+                            Err(e) => tracing::error!("error while receiving client  {}", e.to_string())
+                        };
+                    },
+                    Message::Pong(m) => {
+                        match send_broadcast_msg(&state, game_id, EventMessages::Pong(m)).await {
+                            Ok(()) => tracing::info!("disconnect  {}", user.id),
+                            Err(e) => tracing::error!("error while receiving client  {}", e.to_string())
+                        };
+                    },
                     Message::Close(_) => { 
                         match disconnect_user(user.id, &db, &state).await {
                             Ok(_) => tracing::info!("disconnect  {}", user.id),
@@ -200,7 +220,7 @@ pub async fn game_process(
                     },
                 },
                 Err(e) => {
-                    tracing::error!("error while receiving client  {}", e.to_string());
+                    tracing::error!("p: {} error while receiving client  {}", user.username, e.to_string());
                 }
             }
         }
@@ -218,6 +238,7 @@ async fn send_msg(
     sender: &mut SplitSink<WebSocket<ServerMessage, ClientMessage>, Message<ServerMessage>>,
     message: ServerMessage,
 ) {
+    tracing::debug!("sending websocket msg: {:?}", message);
     if let Err(e) = sender.send(Message::Item(message)).await {
         send_err(
             sender.borrow_mut(),
@@ -238,6 +259,9 @@ async fn process_user_msg(
         ClientMessage::Error(_) => todo!(),
         ClientMessage::RoundEnd(m) => {
             process_user_round_end_message(game_id, player, m, state.clone(), db).await
+        }
+        ClientMessage::UpdateClasses(c) => {
+            update_lobby_classes(state, game_id, c).await
         }
     }
 }

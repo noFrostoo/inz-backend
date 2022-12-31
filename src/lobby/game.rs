@@ -29,6 +29,9 @@ pub struct GameUpdate {
     pub round: i64,
     pub flow: Flow,
     pub settings: Settings,
+    pub round_orders: BTreeMap<Uuid, Order>,
+    pub send_orders: BTreeMap<Uuid, Order>,
+    pub player_classes: BTreeMap<Uuid, u32>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -55,7 +58,7 @@ pub async fn process_user_round_end_message(
             let player_class;
             match lobby_state.round_state.player_classes.get(&player) {
                 Some(c) => player_class = c,
-                None => return Err(AppError::BadRequest("player not found".to_string())),
+                None => return Err(AppError::BadRequest("class for player not found".to_string())),
             }
 
             let resource_price = match lobby_state
@@ -111,16 +114,9 @@ pub async fn process_user_round_end_message(
 
                     send_broadcast_msg(&state, game_id, EventMessages::Ack(player)).await?;
 
-                    let recipient = match lobby_state.round_state.flow.flow.get(&player) {
-                        Some(i) => i,
-                        None => {
-                            return Err(AppError::InternalServerError("incorrect flow".to_string()))
-                        }
-                    };
-
                     //for multiple recipients
-                    msg.placed_order.recipient = *recipient;
-                    msg.placed_order.sender = player;
+                    msg.placed_order.recipient = player;
+                    msg.placed_order.sender = lobby_state.round_state.flow.get_sender(&player)?;
 
                     user_state.money -= msg.placed_order.cost;
                     user_state.spent_money += msg.placed_order.cost;
@@ -170,7 +166,7 @@ pub async fn process_user_round_end_message(
                         let send_order_val_cost = send_order_val * resource_price + fix_order_cost;
 
                         let send_order = Order {
-                            recipient: *recipient,
+                            recipient: lobby_state.round_state.flow.get_recipient(&player)?,
                             sender: player,
                             value: send_order_val,
                             cost: send_order_val_cost,
@@ -612,6 +608,9 @@ pub async fn new_round(
         round: 0,
         flow: lobby_state.round_state.flow.clone(),
         settings: lobby_state.round_state.settings.clone(),
+        round_orders: lobby_state.round_state.round_orders.clone(),
+        send_orders: lobby_state.round_state.send_orders.clone(),
+        player_classes: lobby_state.round_state.player_classes.clone(),
     };
 
     send_broadcast_msg(state, game_id, EventMessages::RoundStart(msg)).await?;
@@ -669,13 +668,13 @@ pub async fn start_new_game(
         let start_money;
         match lobby.settings.start_money.get(&player_class) {
             Some(c) => start_money = c,
-            None => return Err(AppError::BadRequest("Player not found".to_string())),
+            None => return Err(AppError::BadRequest("Player not found start money".to_string())),
         }
 
         let start_magazine;
         match lobby.settings.start_magazine.get(&player_class) {
             Some(c) => start_magazine = c,
-            None => return Err(AppError::BadRequest("Player not found".to_string())),
+            None => return Err(AppError::BadRequest("Player not found start magazine".to_string())),
         }
 
         let incoming_orders_values;
@@ -684,19 +683,7 @@ pub async fn start_new_game(
             None => return Err(AppError::BadRequest("Player not found".to_string())),
         }
 
-        let mut sender_id: Uuid = Uuid::new_v4();
-        let mut found = false;
-        for (sender, recipient) in &flow.flow {
-            if *recipient == player.id {
-                sender_id = *sender;
-                found = true;
-                break;
-            }
-        }
-
-        if !found {
-            return Err(AppError::BadRequest("bad flow ".to_string()));
-        }
+        let sender_id = flow.get_sender(&player.id)?;
 
         let mut incoming_orders: Vec<Order> = Vec::new();
         for incoming_order in incoming_orders_values {
@@ -786,6 +773,9 @@ pub async fn start_new_game(
         AppError::DbErr(e.to_string())
     })?;
 
+
+    let msg;
+
     match state.lobbies.write().await.get_mut(&id) {
         Some(lobby_state) => {
             lobby_state.started = true;
@@ -795,6 +785,16 @@ pub async fn start_new_game(
             lobby_state.round_state.users_states = init_players_states.clone();
             lobby_state.round_state.settings = lobby.settings.0.clone();
             lobby_state.round_state.player_classes = players_classes;
+
+            msg = GameUpdate {
+                player_states: init_players_states.clone(),
+                round: 0,
+                flow: flow.clone(),
+                settings: lobby.settings.0.clone(),
+                round_orders: lobby_state.round_state.round_orders.clone(),
+                send_orders: lobby_state.round_state.send_orders.clone(),
+                player_classes: lobby_state.round_state.player_classes.clone(),
+            };
         }
         None => {
             return Err(AppError::InternalServerError(
@@ -802,13 +802,6 @@ pub async fn start_new_game(
             ))
         }
     }
-
-    let msg = GameUpdate {
-        player_states: init_players_states.clone(),
-        round: 0,
-        flow: flow.clone(),
-        settings: lobby.settings.0.clone(),
-    };
 
     send_broadcast_msg(state, id, EventMessages::GameStart(msg)).await?;
     Ok(())
@@ -846,6 +839,9 @@ fn redistribute_flow(players: &Vec<User>) -> Result<Flow, AppError> {
 
         flow_map.insert(cur_player, next_player);
     }
+
+    print!("players {:?}", players);
+    print!("flow {:?}", flow_map);
 
     Ok(Flow {
         last_player: last_player.id,

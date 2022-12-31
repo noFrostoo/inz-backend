@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, collections::BTreeMap};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Executor, PgPool, Postgres, Transaction};
@@ -14,6 +14,8 @@ use crate::{
     websockets::EventMessages,
     LobbyState, State,
 };
+
+const  MAX_PLAYERS:usize = 33; 
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateLobby {
@@ -110,8 +112,7 @@ pub async fn create_lobby(
         return Err(AppError::NotFound("Looby already created".to_string()));
     }
 
-    //TODO: magic number fix
-    let (tx, rx) = sync::broadcast::channel(33);
+    let (tx, rx) = sync::broadcast::channel(MAX_PLAYERS);
     state.lobbies.write().await.insert(
         lobby.id,
         LobbyState {
@@ -330,6 +331,23 @@ pub async fn update_lobby(
 
     Ok(lobby)
 }
+
+pub async fn update_lobby_classes(
+    state: &Arc<State>,
+    game_id: Uuid,
+    classes: BTreeMap<Uuid, u32>
+) -> Result<(), AppError> {
+    //TODO: check classes
+    match state.lobbies.write().await.get_mut(&game_id) {
+        Some(lobby) => lobby.round_state.player_classes = classes.clone(),
+        None => return Err(AppError::BadRequest("game not found with this id".to_string())),
+    }
+
+    send_broadcast_msg(state, game_id, EventMessages::UpdateClasses(classes)).await?;
+
+    Ok(())
+}
+
 
 pub async fn send_broadcast_msg(
     state: &Arc<State>,

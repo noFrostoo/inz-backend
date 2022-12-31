@@ -170,7 +170,7 @@ pub async fn delete_template_endpoint(
 
     sqlx::query!(
         // language=PostgreSQL
-        r#"delete from "lobby" where id = $1 "#,
+        r#"delete from "template" where id = $1 "#,
         id
     )
     .execute(db)
