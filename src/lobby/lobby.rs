@@ -12,7 +12,7 @@ use crate::{
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
     websockets::EventMessages,
-    LobbyState, State,
+    LobbyState, State, user::user::get_user,
 };
 
 const  MAX_PLAYERS:usize = 33; 
@@ -71,9 +71,10 @@ pub async fn create_lobby(
     payload: CreateLobby,
     state: Arc<State>,
     auth: AuthAdmin,
-) -> Result<Lobby, AppError> {
+) -> Result<LobbyResponse, AppError> {
     let owner_id = auth.user_id;
     let mut connect_code: Option<String> = None;
+    let owner = get_user(owner_id, &mut *tx).await?;
 
     if payload.generate_connect_code {
         let code = generate_valid_code(&mut *tx).await?;
@@ -123,7 +124,7 @@ pub async fn create_lobby(
         },
     );
 
-    Ok(lobby)
+    Ok(LobbyResponse{ lobby, players: Vec::new(), owner: owner })
 }
 
 async fn generate_valid_code(tx: &mut Transaction<'_, Postgres>) -> Result<String, AppError> {

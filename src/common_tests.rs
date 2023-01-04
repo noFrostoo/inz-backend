@@ -160,5 +160,5 @@ pub async fn create_test_lobbies(
     .unwrap();
 
     tx.commit().await.unwrap();
-    (lobby_1, lobby_2)
+    (lobby_1.lobby, lobby_2.lobby)
 }

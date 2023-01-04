@@ -52,7 +52,7 @@ pub enum ServerMessage {
     LobbyUpdate(LobbyUpdate),
     Error(AppError),
     RoundStart(GameUpdate),
-    RoundEnd,
+    RoundFinish,
     GameStart(GameUpdate),
     GameEventSettingsChange(Settings),
     GameEventPopUp(String),
@@ -167,7 +167,7 @@ pub async fn game_process(
                     ServerMessage::GameEventPopUp(s)
                 }
                 EventMessages::GameEventPopUpAll(s) => ServerMessage::GameEventPopUp(s),
-                EventMessages::RoundEnd => ServerMessage::RoundEnd,
+                EventMessages::RoundEnd => ServerMessage::RoundFinish,
                 EventMessages::UpdateClasses(c) => ServerMessage::UpdateClasses(c),
                 EventMessages::Ping(m) => ServerMessage::Ping(m),
                 EventMessages::Pong(m) => ServerMessage::Pong(m),
@@ -183,7 +183,7 @@ pub async fn game_process(
                 Ok(msg) => match msg {
                     Message::Item(i) => {
                         match process_user_msg(game_id, user.id, i, &state, &db).await {
-                            Ok(_) => todo!(),
+                            Ok(_) => tracing::info!("processed user info: {}", game_id),
                             Err(e) => {
                                 let res = send_broadcast_msg(
                                     &state,
@@ -255,8 +255,9 @@ async fn process_user_msg(
     state: &Arc<State>,
     db: &PgPool,
 ) -> Result<(), AppError> {
+    tracing::info!("Processing user msg {:?}", msg);
     match msg {
-        ClientMessage::Error(_) => todo!(),
+        ClientMessage::Error(e) => todo!(),
         ClientMessage::RoundEnd(m) => {
             process_user_round_end_message(game_id, player, m, state.clone(), db).await
         }

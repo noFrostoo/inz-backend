@@ -12,7 +12,7 @@ use crate::{
     auth::{Auth, AuthAdmin},
     entities::{GameEvents, Lobby, Settings, Template, UserRole},
     error::AppError,
-    lobby::lobby::{create_lobby, get_lobby, CreateLobby},
+    lobby::lobby::{create_lobby, get_lobby, CreateLobby, LobbyResponse},
     State,
 };
 
@@ -218,7 +218,7 @@ pub async fn create_lobby_from_template(
     Extension(ref db): Extension<PgPool>,
     Extension(state): Extension<Arc<State>>,
     auth: AuthAdmin,
-) -> Result<Json<Lobby>, AppError> {
+) -> Result<Json<LobbyResponse>, AppError> {
     let template = get_template(id, db).await?;
 
     let mut tx = db

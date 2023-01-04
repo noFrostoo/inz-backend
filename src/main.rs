@@ -67,7 +67,7 @@ pub struct LobbyState {
     round_state: RoundState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RoundState {
     round: i64,
     players: i64,

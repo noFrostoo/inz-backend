@@ -29,7 +29,7 @@ pub async fn create_lobby_endpoint(
     Json(payload): Json<CreateLobby>,
     Extension(state): Extension<Arc<State>>,
     auth: AuthAdmin,
-) -> Result<Json<Lobby>, AppError> {
+) -> Result<Json<LobbyResponse>, AppError> {
     let mut tx = db
         .begin()
         .await
