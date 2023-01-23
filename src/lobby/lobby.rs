@@ -1,4 +1,4 @@
-use std::{sync::Arc, collections::BTreeMap};
+use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Executor, PgPool, Postgres, Transaction};
@@ -11,11 +11,12 @@ use crate::{
     auth::AuthAdmin,
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
+    user::user::get_user,
     websockets::EventMessages,
-    LobbyState, State, user::user::get_user,
+    LobbyState, State,
 };
 
-const  MAX_PLAYERS:usize = 33; 
+const MAX_PLAYERS: usize = 33;
 
 #[derive(Serialize, Deserialize)]
 pub struct CreateLobby {
@@ -87,7 +88,10 @@ pub async fn create_lobby(
         None => Settings::default(),
     };
 
-    let events = GameEvents::new();
+    let events = match payload.events {
+        Some(ge) => ge,
+        None => GameEvents::new(),
+    };
 
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
@@ -124,7 +128,11 @@ pub async fn create_lobby(
         },
     );
 
-    Ok(LobbyResponse{ lobby, players: Vec::new(), owner: owner })
+    Ok(LobbyResponse {
+        lobby,
+        players: Vec::new(),
+        owner: owner,
+    })
 }
 
 async fn generate_valid_code(tx: &mut Transaction<'_, Postgres>) -> Result<String, AppError> {
@@ -254,11 +262,18 @@ pub async fn get_lobby_players(
     .map_err(|e| AppError::DbErr(e.to_string()))?;
 
     let mut players: Vec<User> = Vec::new();
-    for user in users {
+    for user in users.clone() {
         if user.id != lobby.owner_id {
             players.push(user);
         }
     }
+
+    tracing::debug!(
+        "getting players: {:?}, owner: {:?}, users: {}",
+        players,
+        users,
+        lobby.owner_id
+    );
 
     Ok(players)
 }
@@ -336,12 +351,16 @@ pub async fn update_lobby(
 pub async fn update_lobby_classes(
     state: &Arc<State>,
     game_id: Uuid,
-    classes: BTreeMap<Uuid, u32>
+    classes: BTreeMap<Uuid, u32>,
 ) -> Result<(), AppError> {
     //TODO: check classes
     match state.lobbies.write().await.get_mut(&game_id) {
         Some(lobby) => lobby.round_state.player_classes = classes.clone(),
-        None => return Err(AppError::BadRequest("game not found with this id".to_string())),
+        None => {
+            return Err(AppError::BadRequest(
+                "game not found with this id".to_string(),
+            ))
+        }
     }
 
     send_broadcast_msg(state, game_id, EventMessages::UpdateClasses(classes)).await?;
@@ -349,13 +368,12 @@ pub async fn update_lobby_classes(
     Ok(())
 }
 
-
 pub async fn send_broadcast_msg(
     state: &Arc<State>,
     id: Uuid,
     msg: EventMessages,
 ) -> Result<(), AppError> {
-    print!("lobbies: {:?}", state.lobbies.read().await);
+    tracing::trace!("sending broadcast_msg: {:?}", msg);
 
     match state.lobbies.read().await.get(&id) {
         Some(lobby_state) => {

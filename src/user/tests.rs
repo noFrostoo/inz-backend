@@ -223,7 +223,7 @@ async fn test_get_users(db: PgPool) {
 }
 
 #[sqlx::test(fixtures("users"))]
-async fn test_get_create(db: PgPool) {
+async fn test_user_create(db: PgPool) {
     let (app, _) = create_test_app(db).await;
 
     let (auth, mut app) = authorize_admin(app).await;
@@ -314,7 +314,7 @@ async fn test_get_create_bad_role(db: PgPool) {
 }
 
 #[sqlx::test(fixtures("users"))]
-async fn test_get_delete(db: PgPool) {
+async fn test_delete_user(db: PgPool) {
     let (app, _) = create_test_app(db).await;
 
     let opt: Option<&AuthPayload> = None;

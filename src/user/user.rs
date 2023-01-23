@@ -7,14 +7,14 @@ use argon2::{
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sqlx::{Executor, Postgres, Transaction, PgPool};
+use sqlx::{Executor, PgPool, Postgres, Transaction};
 use tracing::{event, Level};
 use uuid::Uuid;
 
 use crate::{
     entities::{GameEvents, Lobby, Settings, User, UserRole},
     error::AppError,
-    lobby::lobby::{get_lobby_transaction, send_broadcast_msg, LobbyUserUpdate, get_lobby_users},
+    lobby::lobby::{get_lobby_transaction, get_lobby_users, send_broadcast_msg, LobbyUserUpdate},
     websockets::EventMessages,
     State,
 };
@@ -249,7 +249,7 @@ pub async fn disconnect_user(id: Uuid, db: &PgPool, state: &Arc<State>) -> Resul
     if user.game_id.is_none() {
         return Err(AppError::NotConnected);
     }
-    
+
     let game_id = user.game_id.unwrap();
 
     event!(Level::INFO, "Disconnecting user: {}", id);
@@ -283,7 +283,6 @@ pub async fn disconnect_user(id: Uuid, db: &PgPool, state: &Arc<State>) -> Resul
 
     Ok(())
 }
-
 
 pub async fn lock_user_tables<'a, E>(db: E) -> Result<(), AppError>
 where

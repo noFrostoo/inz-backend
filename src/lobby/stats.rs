@@ -49,7 +49,6 @@ pub async fn game_stats(
 pub async fn players_stats(
     Path(game_id): Path<Uuid>,
     Extension(ref db): Extension<PgPool>,
-    Json(stats_types): Json<UserStats>,
     auth: Auth,
 ) -> Result<Json<HashMap<String, HashMap<Uuid, Vec<i64>>>>, AppError> {
     let lobby = get_lobby(game_id, db).await?;
@@ -65,17 +64,26 @@ pub async fn players_stats(
         ));
     }
 
-    Ok(Json(get_player_stats(game_id, db, stats_types).await?))
+    let stats = vec![
+        UserStatsType::MagazineState,
+        UserStatsType::Money,
+        UserStatsType::PlacedOrder,
+        UserStatsType::ReceivedOrder,
+        UserStatsType::SpentMoney,
+        UserStatsType::BackOrder,
+    ];
+
+    Ok(Json(get_player_stats(game_id, db, stats).await?))
 }
 
 pub async fn get_player_stats(
     game_id: Uuid,
     db: &PgPool,
-    stats_types: UserStats,
+    stats_types: Vec<UserStatsType>,
 ) -> Result<HashMap<String, HashMap<Uuid, Vec<i64>>>, AppError> {
     let games_states = sqlx::query_as!(GameState,
         r#"
-        select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
+        select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, supply, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
         from "game_state"
         where game_id = $1
         order by round"#,
@@ -86,7 +94,7 @@ pub async fn get_player_stats(
 
     let mut stats = HashMap::new();
 
-    for stats_type in stats_types.required_stats {
+    for stats_type in stats_types {
         match stats_type {
             UserStatsType::Money => {
                 get_stats_for_type(|u| u.money, "money".to_string(), &games_states, &mut stats)

@@ -10,12 +10,12 @@ use uuid::Uuid;
 
 use crate::{
     entities::{
-        ActionTarget, EventAction, EventCondition, Flow, GameState, Lobby, MetBy, Order, Resource,
-        Settings, User, UserState,
+        ActionTarget, EventAction, EventCondition, Flow, GameState, GeneratedOrderStyle, Lobby,
+        MetBy, Order, Resource, Settings, User, UserState,
     },
     error::AppError,
     websockets::EventMessages,
-    LobbyState, State, RoundState,
+    LobbyState, RoundState, State,
 };
 
 use super::{
@@ -66,22 +66,23 @@ pub async fn process_user_round_end_message(
             ))
         }
     }
-        
 
-
-    tracing::debug!("got lobby_state for process_user_round_end_message: {}", game_id);
+    tracing::debug!(
+        "got lobby_state for process_user_round_end_message: {}",
+        game_id
+    );
 
     let player_class;
     match round_state.player_classes.get(&player) {
         Some(c) => player_class = c,
-        None => return Err(AppError::BadRequest("class for player not found".to_string())),
+        None => {
+            return Err(AppError::BadRequest(
+                "class for player not found".to_string(),
+            ))
+        }
     }
 
-    let resource_price = match round_state
-        .settings
-        .resource_price
-        .get(&player_class)
-    {
+    let resource_price = match round_state.settings.resource_price.get(&player_class) {
         Some(c) => c,
         None => {
             return Err(AppError::BadRequest(
@@ -90,11 +91,7 @@ pub async fn process_user_round_end_message(
         }
     };
 
-    let fix_order_cost = match round_state
-        .settings
-        .fix_order_cost
-        .get(&player_class)
-    {
+    let fix_order_cost = match round_state.settings.fix_order_cost.get(&player_class) {
         Some(c) => c,
         None => {
             return Err(AppError::BadRequest(
@@ -103,11 +100,7 @@ pub async fn process_user_round_end_message(
         }
     };
 
-    let magazine_cost = match round_state
-        .settings
-        .magazine_cost
-        .get(&player_class)
-    {
+    let magazine_cost = match round_state.settings.magazine_cost.get(&player_class) {
         Some(c) => c,
         None => {
             return Err(AppError::BadRequest(
@@ -126,10 +119,11 @@ pub async fn process_user_round_end_message(
                     "not enough money for placed order".to_string(),
                 ));
             }
-            
+
             tracing::debug!("sending ack: {}", game_id);
             send_broadcast_msg(&state, game_id, EventMessages::Ack(player)).await?;
 
+            tracing::debug!("send ack, processing orders");
             //for multiple recipients
             msg.placed_order.recipient = player;
             msg.placed_order.sender = round_state.flow.get_sender(&player)?;
@@ -189,9 +183,7 @@ pub async fn process_user_round_end_message(
                     cost: send_order_val_cost,
                 };
 
-                round_state
-                    .send_orders
-                    .insert(player, send_order.clone());
+                round_state.send_orders.insert(player, send_order.clone());
 
                 user_state.sent_orders.push(send_order);
             } else {
@@ -207,10 +199,11 @@ pub async fn process_user_round_end_message(
         }
     }
 
+    round_state.players_finished += 1;
+
     match state.lobbies.write().await.get_mut(&game_id) {
         Some(lobby_state) => {
             lobby_state.round_state = round_state.clone();
-            lobby_state.round_state.players_finished += 1;
         }
         None => {
             return Err(AppError::InternalServerError(
@@ -219,12 +212,10 @@ pub async fn process_user_round_end_message(
         }
     }
 
-
     if round_state.players_finished == round_state.players {
         tracing::debug!("finishing rounds: {}", game_id);
         finish_round(game_id, &mut round_state, &state, db).await?;
     }
-
 
     Ok(())
 }
@@ -237,7 +228,9 @@ pub async fn process_game_events(
     db: &PgPool,
 ) -> Result<(), AppError> {
     let lobby = get_lobby(game_id, db).await?;
+    tracing::debug!("processing events, count: {}", lobby.events.0.events.len());
     for event in lobby.events.0.events {
+        tracing::debug!("processing event: {}", event.name);
         let (cond_met, targets) = evaluate_cond(&event, round_state, db, game_id).await?;
 
         if !cond_met {
@@ -411,7 +404,7 @@ async fn evaluate_cond(
         EventCondition::SingleChange { resource, value } => {
             let last_state = sqlx::query_as!(GameState,
                 r#"
-                    select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
+                    select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, supply, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
                     from "game_state"
                     where game_id = $1 and round = $2"#,
                 game_id,
@@ -442,12 +435,14 @@ async fn evaluate_cond(
 }
 
 fn evaluate_round_cond(round_state: &mut RoundState, round: i64) -> (bool, Vec<Uuid>) {
+    tracing::debug!("assesing round cond, {}, {}", round_state.round, round);
     let mut players_id = Vec::new();
     if round_state.round == round {
         for (u_id, _) in &round_state.users_states {
             players_id.push(*u_id);
         }
     }
+    tracing::debug!("returning: {} {:?}", players_id.len() != 0, players_id);
     (players_id.len() != 0, players_id)
 }
 
@@ -522,11 +517,12 @@ pub async fn finish_round(
 ) -> Result<(), AppError> {
     send_broadcast_msg(state, game_id, EventMessages::RoundEnd).await?;
 
-    let next_demand = generate_demand(round_state);
+    tracing::debug!("finishing round, generating demand");
+    let next_demand = generate_demand(round_state.demand, &round_state.settings.demand_style);
     let next_demand_cost = round_state.settings.resource_basic_price * next_demand;
     let generated_order = Order {
-        recipient: round_state.flow.last_player,
-        sender: Uuid::nil(),
+        recipient: Uuid::nil(),
+        sender: round_state.flow.last_player,
         value: next_demand,
         cost: next_demand_cost,
     };
@@ -535,32 +531,48 @@ pub async fn finish_round(
         .round_orders
         .insert(Uuid::nil(), generated_order);
 
-    let last_player_placed_order = match round_state
-        .round_orders
-        .get(&round_state.flow.last_player)
-    {
-        Some(o) => o.clone(),
-        None => {
-            return Err(AppError::InternalServerError(
-                "not found fist player order".to_string(),
-            ))
-        }
-    };
+    tracing::debug!("round orders {:?}", round_state.round_orders);
+
+    let mut generated_order_supply =
+        match round_state.round_orders.get(&round_state.flow.first_player) {
+            Some(o) => o.clone(),
+            None => {
+                return Err(AppError::InternalServerError(
+                    "not found fist player order".to_string(),
+                ))
+            }
+        };
+
+    let next_supply = generate_demand(round_state.supply, &round_state.settings.supply_style);
+    if next_supply < generated_order_supply.value {
+        let next_supply_cost = round_state.settings.resource_basic_price * next_supply;
+        generated_order_supply = Order {
+            recipient: round_state.flow.first_player,
+            sender: Uuid::nil(),
+            value: next_supply,
+            cost: next_supply_cost,
+        };
+    }
 
     round_state
         .send_orders
-        .insert(Uuid::nil(), last_player_placed_order);
+        .insert(Uuid::nil(), generated_order_supply);
 
     for (_, order) in &round_state.round_orders {
-        match 
-            round_state
-            .users_states
-            .get_mut(&order.recipient)
-        {
+        if order.sender.is_nil() {
+            continue;
+        }
+
+        tracing::debug!(
+            "trying to push order for sender {}, recipient: {}",
+            order.sender,
+            order.recipient
+        );
+        match round_state.users_states.get_mut(&order.sender) {
             Some(us) => us.requested_orders.push(order.clone()),
             None => {
                 return Err(AppError::InternalServerError(format!(
-                    "not found recipient for order {:?}",
+                    "not found placed recipient for order {:?}",
                     order
                 )))
             }
@@ -568,15 +580,16 @@ pub async fn finish_round(
     }
 
     for (_, order) in &round_state.send_orders {
-        match 
-            round_state
-            .users_states
-            .get_mut(&order.recipient)
-        {
+        if order.recipient.is_nil() {
+            continue;
+        }
+
+        tracing::debug!("trying to push order for recipient {}", order.recipient);
+        match round_state.users_states.get_mut(&order.recipient) {
             Some(us) => us.incoming_orders.push(order.clone()),
             None => {
                 return Err(AppError::InternalServerError(format!(
-                    "not found recipient for order {:?}",
+                    "not found sent recipient for order {:?}",
                     order
                 )))
             }
@@ -589,7 +602,6 @@ pub async fn finish_round(
     match state.lobbies.write().await.get_mut(&game_id) {
         Some(lobby_state) => {
             lobby_state.round_state = round_state.clone();
-            lobby_state.round_state.players_finished += 1;
         }
         None => {
             return Err(AppError::InternalServerError(
@@ -601,15 +613,17 @@ pub async fn finish_round(
     sqlx::query_as!(GameState,
         // language=PostgreSQL
         r#"insert into "game_state" 
-        (round, user_states, round_orders, send_orders, flow, demand, game_id) 
-        values ($1, $2, $3, $4, $5, $6, $7) 
-        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id "#,
+        (round, user_states, round_orders, send_orders, players_classes, flow, demand, supply, game_id) 
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, supply, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id "#,
         round_state.round,
         sqlx::types::Json(&round_state.users_states) as _,
         sqlx::types::Json(&round_state.round_orders) as _,
         sqlx::types::Json(&round_state.send_orders) as _,
+        sqlx::types::Json(&round_state.player_classes) as _,
         sqlx::types::Json(&round_state.flow) as _,
         round_state.demand,
+        round_state.supply,
         game_id
     )
     .fetch_one(db)
@@ -636,10 +650,16 @@ pub async fn new_round(
 ) -> Result<(), AppError> {
     process_game_events(game_id, round_state, state, db).await?;
 
+    let send_orders = round_state.send_orders.clone();
+    let round_orders = round_state.round_orders.clone();
+
+    round_state.players_finished = 0;
+    round_state.round_orders.clear();
+    round_state.send_orders.clear();
+
     match state.lobbies.write().await.get_mut(&game_id) {
         Some(lobby_state) => {
             lobby_state.round_state = round_state.clone();
-            lobby_state.round_state.players_finished += 1;
         }
         None => {
             return Err(AppError::InternalServerError(
@@ -650,11 +670,11 @@ pub async fn new_round(
 
     let msg = GameUpdate {
         player_states: round_state.users_states.clone(),
-        round: 0,
+        round: round_state.round,
         flow: round_state.flow.clone(),
         settings: round_state.settings.clone(),
-        round_orders: round_state.round_orders.clone(),
-        send_orders: round_state.send_orders.clone(),
+        round_orders: round_orders,
+        send_orders: send_orders,
         player_classes: round_state.player_classes.clone(),
     };
 
@@ -669,16 +689,15 @@ pub async fn finish_game(
     state: &Arc<State>,
     db: &PgPool,
 ) -> Result<(), AppError> {
-    let stats_types = UserStats {
-        required_stats: vec![
-            UserStatsType::Money,
-            UserStatsType::MagazineState,
-            UserStatsType::BackOrder,
-            UserStatsType::PlacedOrder,
-            UserStatsType::Performance,
-            UserStatsType::SpentMoney,
-        ],
-    };
+    let stats_types = vec![
+        UserStatsType::Money,
+        UserStatsType::MagazineState,
+        UserStatsType::BackOrder,
+        UserStatsType::PlacedOrder,
+        UserStatsType::ReceivedOrder,
+        UserStatsType::SpentMoney,
+    ];
+
     let stats = get_player_stats(game_id, db, stats_types).await?;
     let msg = GameEnd {
         player_states: round_state.users_states.clone(),
@@ -713,17 +732,25 @@ pub async fn start_new_game(
         let start_money;
         match lobby.settings.start_money.get(&player_class) {
             Some(c) => start_money = c,
-            None => return Err(AppError::BadRequest("Player not found start money".to_string())),
+            None => {
+                return Err(AppError::BadRequest(
+                    "Player not found start money".to_string(),
+                ))
+            }
         }
 
         let start_magazine;
         match lobby.settings.start_magazine.get(&player_class) {
             Some(c) => start_magazine = c,
-            None => return Err(AppError::BadRequest("Player not found start magazine".to_string())),
+            None => {
+                return Err(AppError::BadRequest(
+                    "Player not found start magazine".to_string(),
+                ))
+            }
         }
 
         let incoming_orders_values;
-        match lobby.settings.start_order_queue.get(&player_class) {
+        match lobby.settings.incoming_start_queue.get(&player_class) {
             Some(c) => incoming_orders_values = c.clone(),
             None => return Err(AppError::BadRequest("Player not found".to_string())),
         }
@@ -741,7 +768,7 @@ pub async fn start_new_game(
         }
 
         let requested_orders_values;
-        match lobby.settings.start_order_queue.get(&player_class) {
+        match lobby.settings.requested_start_queue.get(&player_class) {
             Some(c) => requested_orders_values = c.clone(),
             None => return Err(AppError::BadRequest("Player not found".to_string())),
         }
@@ -797,12 +824,27 @@ pub async fn start_new_game(
         },
     };
 
+    let supply = match &lobby.settings.supply_style {
+        crate::entities::GeneratedOrderStyle::Default => 10,
+        crate::entities::GeneratedOrderStyle::Linear { start, increase: _ } => *start,
+        crate::entities::GeneratedOrderStyle::Multiplication { start, increase: _ } => *start,
+        crate::entities::GeneratedOrderStyle::Exponential {
+            start,
+            power: _,
+            modulator: _,
+        } => *start,
+        crate::entities::GeneratedOrderStyle::List { list: demand } => match demand.first() {
+            Some(d) => *d,
+            None => return Err(AppError::BadRequest("bad list demand".to_string())),
+        },
+    };
+
     sqlx::query_as!(GameState,
         // language=PostgreSQL
         r#"insert into "game_state" 
-        (round, user_states, round_orders, send_orders, flow, players_classes, demand, game_id) 
-        values ($1, $2, $3, $4, $5, $6, $7, $8) 
-        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>",game_id "#,
+        (round, user_states, round_orders, send_orders, flow, players_classes, demand, supply, game_id) 
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+        returning id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, supply, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>",game_id "#,
         0,
         sqlx::types::Json(&init_players_states) as _,
         sqlx::types::Json(init_orders) as _,
@@ -810,6 +852,7 @@ pub async fn start_new_game(
         sqlx::types::Json(&flow) as _,
         sqlx::types::Json(&players_classes) as _,
         demand,
+        supply,
         id
     )
     .fetch_one(&mut *tx)
@@ -818,12 +861,18 @@ pub async fn start_new_game(
         AppError::DbErr(e.to_string())
     })?;
 
-
     let msg;
+
+    tracing::debug!(
+        "initing game, players_count, {} players; {:?}",
+        players_count,
+        players
+    );
 
     match state.lobbies.write().await.get_mut(&id) {
         Some(lobby_state) => {
             lobby_state.started = true;
+            lobby_state.round_state.flow = flow.clone();
             lobby_state.round_state.round = 0;
             lobby_state.round_state.players = players_count;
             lobby_state.round_state.players_finished = 0;
@@ -895,34 +944,29 @@ fn redistribute_flow(players: &Vec<User>) -> Result<Flow, AppError> {
     })
 }
 
-fn generate_demand(round_state: &RoundState) -> i64 {
-    match &round_state.settings.demand_style {
-        crate::entities::GeneratedOrderStyle::Default => {
-            (round_state.demand as f64 * 1.5) as i64
-        }
+fn generate_demand(last_demand: i64, demand_style: &GeneratedOrderStyle) -> i64 {
+    match &demand_style {
+        crate::entities::GeneratedOrderStyle::Default => (last_demand as f64 * 1.5) as i64,
         crate::entities::GeneratedOrderStyle::Linear { start: _, increase } => {
-            round_state.demand + increase
+            last_demand + increase
         }
         crate::entities::GeneratedOrderStyle::Multiplication { start: _, increase } => {
-            round_state.demand * increase
+            last_demand * increase
         }
         crate::entities::GeneratedOrderStyle::Exponential {
             start: _,
             power,
             modulator,
-        } => round_state.demand * (modulator * (E.powi(*power as i32)) as i64),
+        } => last_demand * (modulator * (E.powi(*power as i32)) as i64),
         crate::entities::GeneratedOrderStyle::List { list: demand } => {
-            let index = match demand
-                .iter()
-                .position(|&r| r == round_state.demand)
-            {
+            let index = match demand.iter().position(|&r| r == last_demand) {
                 Some(i) => i,
                 None => demand.len() - 1,
             };
 
             match demand.get(index) {
                 Some(d) => *d,
-                None => round_state.demand,
+                None => last_demand,
             }
         }
     }

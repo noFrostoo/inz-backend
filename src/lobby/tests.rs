@@ -166,22 +166,27 @@ async fn test_create_lobby(db: PgPool) {
         str::from_utf8(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..]).unwrap()
     );
 
-    let returned_lobby: Lobby =
+    let returned_lobby: LobbyResponse =
         serde_json::from_slice(&hyper::body::to_bytes(response.into_body()).await.unwrap()[..])
             .unwrap();
 
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL
         r#"select id, name, password, public, connect_code, code_use_times, max_players, started, owner_id, settings as "settings: sqlx::types::Json<Settings>", events as "events: sqlx::types::Json<GameEvents>" from "lobby" where id = $1"#,
-        returned_lobby.id
+        returned_lobby.lobby.id
     )
     .fetch_one(&db)
     .await
     .unwrap();
 
-    assert_eq!(lobby, returned_lobby);
+    assert_eq!(lobby, returned_lobby.lobby);
 
-    assert!(state.lobbies.read().await.get(&returned_lobby.id).is_some())
+    assert!(state
+        .lobbies
+        .read()
+        .await
+        .get(&returned_lobby.lobby.id)
+        .is_some())
 }
 
 #[sqlx::test(fixtures("users"))]

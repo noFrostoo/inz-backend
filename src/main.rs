@@ -17,8 +17,8 @@ use axum::{
 };
 use axum_server::tls_rustls::RustlsConfig;
 use axum_typed_websockets::WebSocketUpgrade;
-use entities::{Flow, Order, Settings, UserState, Lobby, GameState};
-use hyper::{Method, header};
+use entities::{Flow, GameState, Lobby, Order, Settings, UserState};
+use hyper::{header, Method};
 use lobby::{
     lobby_endpoints::{get_lobbies_endpoint, stop_game_endpoint},
     stats::{game_stats, players_stats},
@@ -29,7 +29,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     env,
     net::SocketAddr,
-    sync::Arc, path::PathBuf,
+    path::PathBuf,
+    sync::Arc,
 };
 use tokio::sync;
 use tower::ServiceBuilder;
@@ -45,7 +46,7 @@ use crate::{
         create_lobby_endpoint, delete_lobby_endpoint, get_lobby_endpoint, start_game_endpoint,
         update_lobby_endpoint,
     },
-    template::{create_lobby_from_template, create_template_from_lobby_endpoint},
+    template::template::{create_lobby_from_template, create_template_from_lobby_endpoint},
     user::user_endpoints::{
         connect_user_endpoint, create_user_endpoint, delete_user_endpoint,
         disconnect_user_endpoint, get_me_endpoint, get_user_endpoint, get_users_endpoint,
@@ -54,7 +55,7 @@ use crate::{
     },
 };
 
-use crate::template::{
+use crate::template::template::{
     create_template_endpoint, delete_template_endpoint, get_template_endpoint,
     get_templates_endpoint, update_template_endpoint,
 };
@@ -79,6 +80,7 @@ pub struct RoundState {
     settings: Settings,
     flow: Flow,
     demand: i64,
+    supply: i64,
 }
 
 impl RoundState {
@@ -94,6 +96,7 @@ impl RoundState {
             settings: Settings::default(),
             flow: Flow::default(),
             demand: 0,
+            supply: 0,
         }
     }
 }
@@ -166,8 +169,12 @@ async fn websocket_handler(
 ) -> impl IntoResponse {
     let db_clone = db.clone();
     let token = auth.token.clone();
-    let mut r = ws.map(|w| {w.protocols([header::SEC_WEBSOCKET_PROTOCOL.to_string()])}).on_upgrade(|socket| game_process(socket, state, db_clone, auth)).into_response();
-    r.headers_mut().insert(header::SEC_WEBSOCKET_PROTOCOL, token.parse().unwrap());
+    let mut r = ws
+        .map(|w| w.protocols([header::SEC_WEBSOCKET_PROTOCOL.to_string()]))
+        .on_upgrade(|socket| game_process(socket, state, db_clone, auth))
+        .into_response();
+    r.headers_mut()
+        .insert(header::SEC_WEBSOCKET_PROTOCOL, token.parse().unwrap());
     print!("{:?}", r);
     r
 }
@@ -207,7 +214,7 @@ pub fn create_app(db: PgPool, state: Arc<State>) -> Router {
         .route("/lobby/:id/start", post(start_game_endpoint))
         .route("/lobby/:id/stop", post(stop_game_endpoint))
         .route("/lobby/:id/stats/game/", get(game_stats))
-        .route("/lobby/:id/stats/users/", get(players_stats))
+        .route("/lobby/:id/stats/players/", get(players_stats))
         .route("/lobby/websocket", get(websocket_handler))
         .route(
             "/template",
@@ -242,19 +249,16 @@ async fn restore_lobbies(state: &Arc<State>, db: &PgPool) {
 
     let query = builder.build_query_as::<Lobby>();
 
-    let lobbies = match query
-        .fetch_all(db)
-        .await {
-            Ok(l) => l,
-            Err(e) => panic!("couldn't get lobbies {}", e),
-        }
-    ;
+    let lobbies = match query.fetch_all(db).await {
+        Ok(l) => l,
+        Err(e) => panic!("couldn't get lobbies {}", e),
+    };
     for lobby in lobbies {
         print!("{}", lobby.id);
         if lobby.started {
             let game_state = sqlx::query_as!(GameState,
                 r#"
-                    select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
+                    select id, round, user_states as "user_states: sqlx::types::Json<BTreeMap<Uuid, UserState>>", round_orders as "round_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", flow as "flow: sqlx::types::Json<Flow>", demand, supply, send_orders as "send_orders: sqlx::types::Json<BTreeMap<Uuid, Order>>", players_classes as "players_classes: sqlx::types::Json<BTreeMap<Uuid, u32>>", game_id
                     from "game_state"
                     where game_id = $1"#,
                     lobby.id,
@@ -263,32 +267,39 @@ async fn restore_lobbies(state: &Arc<State>, db: &PgPool) {
             .unwrap();
 
             let (tx, rx) = sync::broadcast::channel(33);
-            state.lobbies.write().await.insert(lobby.id, LobbyState { 
-                sender: Arc::new(tx), 
-                _receiver: Arc::new(rx), 
-                started: false, 
-                round_state: RoundState{
-                    round: game_state.round,
-                    players: game_state.players_classes.0.len() as i64,
-                    players_finished: game_state.players_classes.0.len() as i64,
-                    users_states: game_state.user_states.0,
-                    round_orders: game_state.round_orders.0,
-                    send_orders: game_state.send_orders.0,
-                    player_classes: game_state.players_classes.0,
-                    settings: lobby.settings.0,
-                    flow: game_state.flow.0,
-                    demand: game_state.demand,
-                }
-            });
+            state.lobbies.write().await.insert(
+                lobby.id,
+                LobbyState {
+                    sender: Arc::new(tx),
+                    _receiver: Arc::new(rx),
+                    started: false,
+                    round_state: RoundState {
+                        round: game_state.round,
+                        players: game_state.players_classes.0.len() as i64,
+                        players_finished: game_state.players_classes.0.len() as i64,
+                        users_states: game_state.user_states.0,
+                        round_orders: game_state.round_orders.0,
+                        send_orders: game_state.send_orders.0,
+                        player_classes: game_state.players_classes.0,
+                        settings: lobby.settings.0,
+                        flow: game_state.flow.0,
+                        demand: game_state.demand,
+                        supply: game_state.supply,
+                    },
+                },
+            );
         } else {
             //TODO: magic number fix
             let (tx, rx) = sync::broadcast::channel(33);
-            state.lobbies.write().await.insert(lobby.id, LobbyState { 
-                sender: Arc::new(tx), 
-                _receiver: Arc::new(rx), 
-                started: false, 
-                round_state: RoundState::new()
-            });
+            state.lobbies.write().await.insert(
+                lobby.id,
+                LobbyState {
+                    sender: Arc::new(tx),
+                    _receiver: Arc::new(rx),
+                    started: false,
+                    round_state: RoundState::new(),
+                },
+            );
         }
     }
 }

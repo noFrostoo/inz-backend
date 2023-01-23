@@ -1,4 +1,4 @@
-use std::{borrow::BorrowMut, sync::Arc, collections::BTreeMap};
+use std::{borrow::BorrowMut, collections::BTreeMap, sync::Arc};
 
 use axum_typed_websockets::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
@@ -11,9 +11,9 @@ use crate::{
     error::AppError,
     lobby::{
         game::{process_user_round_end_message, GameEnd, GameUpdate, UserEndRound},
-        lobby::{send_broadcast_msg, LobbyUpdate, LobbyUserUpdate, update_lobby_classes},
+        lobby::{send_broadcast_msg, update_lobby_classes, LobbyUpdate, LobbyUserUpdate},
     },
-    user::user::{get_user, disconnect_user},
+    user::user::{disconnect_user, get_user},
     State,
 };
 //TODO: learn more about it
@@ -69,7 +69,7 @@ pub enum ServerMessage {
 pub enum ClientMessage {
     Error(String), //TODO:
     RoundEnd(UserEndRound),
-    UpdateClasses(BTreeMap<Uuid, u32>)
+    UpdateClasses(BTreeMap<Uuid, u32>),
 }
 
 async fn send_err(
@@ -198,29 +198,39 @@ pub async fn game_process(
                             }
                         };
                     }
-                    Message::Ping(m) => { 
+                    Message::Ping(m) => {
                         match send_broadcast_msg(&state, game_id, EventMessages::Ping(m)).await {
                             Ok(()) => tracing::info!("disconnect  {}", user.id),
-                            Err(e) => tracing::error!("error while receiving client  {}", e.to_string())
+                            Err(e) => {
+                                tracing::error!("error while receiving client  {}", e.to_string())
+                            }
                         };
-                    },
+                    }
                     Message::Pong(m) => {
                         match send_broadcast_msg(&state, game_id, EventMessages::Pong(m)).await {
                             Ok(()) => tracing::info!("disconnect  {}", user.id),
-                            Err(e) => tracing::error!("error while receiving client  {}", e.to_string())
+                            Err(e) => {
+                                tracing::error!("error while receiving client  {}", e.to_string())
+                            }
                         };
-                    },
-                    Message::Close(_) => { 
+                    }
+                    Message::Close(_) => {
                         match disconnect_user(user.id, &db, &state).await {
                             Ok(_) => tracing::info!("disconnect  {}", user.id),
-                            Err(e) => tracing::error!("error while receiving client  {}", e.to_string())
+                            Err(e) => {
+                                tracing::error!("error while receiving client  {}", e.to_string())
+                            }
                         }
 
                         break;
-                    },
+                    }
                 },
                 Err(e) => {
-                    tracing::error!("p: {} error while receiving client  {}", user.username, e.to_string());
+                    tracing::error!(
+                        "p: {} error while receiving client  {}",
+                        user.username,
+                        e.to_string()
+                    );
                 }
             }
         }
@@ -261,8 +271,6 @@ async fn process_user_msg(
         ClientMessage::RoundEnd(m) => {
             process_user_round_end_message(game_id, player, m, state.clone(), db).await
         }
-        ClientMessage::UpdateClasses(c) => {
-            update_lobby_classes(state, game_id, c).await
-        }
+        ClientMessage::UpdateClasses(c) => update_lobby_classes(state, game_id, c).await,
     }
 }

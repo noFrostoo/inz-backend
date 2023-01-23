@@ -28,7 +28,6 @@ pub struct Auth {
     pub exp: usize,
 }
 
-
 #[derive(Debug, Serialize, Deserialize)]
 struct WebSocketAuthInner {
     pub username: String,
@@ -43,7 +42,7 @@ pub struct WebSocketAuth {
     pub user_id: Uuid,
     pub role: UserRole,
     pub exp: usize,
-    pub token: String
+    pub token: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -114,15 +113,15 @@ pub async fn authorize_endpoint(
         return Err(AppError::MissingCredentials);
     }
 
-    let user = sqlx::query_as!(User,
-        r#"select id, username, password, game_id, role as "role: UserRole" from "user" where username = $1 "#,
+    let user = sqlx::query_as!(
+        User,
+        r#"select id, username, password, game_id, role as "role: UserRole" 
+        from "user" where username = $1 "#,
         payload.username
     )
     .fetch_one(db)
     .await
-    .map_err(|e| {
-        AppError::WrongCredentials(e.to_string())
-    })?;
+    .map_err(|e| AppError::WrongCredentials(e.to_string()))?;
 
     let parsed_hash =
         PasswordHash::new(&user.password).map_err(|e| AppError::WrongCredentials(e.to_string()))?;
@@ -174,43 +173,42 @@ where
     type Rejection = AppError;
 
     async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        print!("AAAAAAAAAAAAAAAAAAAAAAa");
         let header = match req.headers().get("Sec-WebSocket-Protocol") {
             Some(h) => h,
-            None => return Err(AppError::InvalidToken)
+            None => return Err(AppError::InvalidToken),
         };
 
         let string_val = header.to_str().map_err(|_| AppError::InvalidToken)?;
         let mut splitted = string_val.split(",");
 
         if splitted.next() != Some("access_token") {
-            return Err(AppError::InvalidToken)
+            return Err(AppError::InvalidToken);
         }
 
         let token = match splitted.next() {
             Some(t) => t.trim(),
-            None => return Err(AppError::InvalidToken)
+            None => return Err(AppError::InvalidToken),
         };
-        
+
         tracing::info!("token: {}", token);
 
-        let token_data = decode::<WebSocketAuthInner>(token, &KEYS.decoding, &Validation::default())
-            .map_err(|_| AppError::InvalidToken)?;
+        let token_data =
+            decode::<WebSocketAuthInner>(token, &KEYS.decoding, &Validation::default())
+                .map_err(|_| AppError::InvalidToken)?;
 
-        tracing::info!("WEBsocet connected"); 
+        tracing::info!("Websocet connected");
 
         let auth = WebSocketAuth {
             token: token.to_string(),
             username: token_data.claims.username,
             user_id: token_data.claims.user_id,
             role: token_data.claims.role,
-            exp: token_data.claims.exp
+            exp: token_data.claims.exp,
         };
 
         Ok(auth)
     }
 }
-
 
 #[async_trait]
 impl<B> FromRequest<B> for AuthAdmin

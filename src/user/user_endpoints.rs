@@ -9,15 +9,13 @@ use tracing::{event, Level};
 use uuid::Uuid;
 
 use crate::{
-    auth::{Auth},
+    auth::{Auth, AuthAdmin},
     entities::{Lobby, User, UserRole},
     error::AppError,
-    lobby::lobby::{
-        get_lobby_transaction,
-    },
+    lobby::lobby::get_lobby_transaction,
     user::user::{
-        connect_user, create_user, generate_password, generate_username, lock_lobby_tables,
-        lock_user_tables, quick_connect, update_user_password, disconnect_user
+        connect_user, create_user, disconnect_user, generate_password, generate_username,
+        lock_lobby_tables, lock_user_tables, quick_connect, update_user_password,
     },
     State,
 };
@@ -27,7 +25,7 @@ use super::user::{get_user, ConnectUser, CreateUser, QuickConnect, UpdateUser};
 pub async fn create_user_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<CreateUser>,
-    // _auth: AuthAdmin,
+    //_auth: AuthAdmin,
 ) -> Result<Json<User>, AppError> {
     let mut tx = db
         .begin()

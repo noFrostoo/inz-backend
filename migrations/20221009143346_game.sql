@@ -9,5 +9,6 @@ create table "game_state"
     players_classes jsonb not null,
     flow            jsonb not null,
     demand          BIGINT not null,
+    supply          BIGINT not null,
     game_id         uuid   not null
 );

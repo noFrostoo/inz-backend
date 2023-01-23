@@ -46,7 +46,8 @@ pub struct Settings {
     pub max_rounds: i64,
     pub show_stats_for_users: bool,
     pub user_classes: Vec<u32>,
-    pub start_order_queue: BTreeMap<u32, Vec<i64>>,
+    pub incoming_start_queue: BTreeMap<u32, Vec<i64>>,
+    pub requested_start_queue: BTreeMap<u32, Vec<i64>>,
     pub demand_style: GeneratedOrderStyle,
     pub supply_style: GeneratedOrderStyle,
     pub unlimited_money: bool,
@@ -178,6 +179,7 @@ pub struct GameState {
     pub players_classes: Json<BTreeMap<Uuid, u32>>,
     pub flow: Json<Flow>,
     pub demand: i64,
+    pub supply: i64,
     pub game_id: Uuid,
 }
 
@@ -196,30 +198,28 @@ impl Flow {
 
         match self.flow.get(player) {
             Some(r) => return Ok(*r),
-            None => return Err(AppError::BadRequest("not found recipient in flow".to_string())),
+            None => {
+                return Err(AppError::BadRequest(
+                    "not found recipient in flow".to_string(),
+                ))
+            }
         }
     }
 
     pub fn get_sender(&self, player: &Uuid) -> Result<Uuid, AppError> {
-        let mut sender_id: &Uuid = &Uuid::new_v4();
-        let mut found = false;
+        tracing::debug!("getting sender: {} from flow: {:?}", player, self.flow);
         for (sender, recipient) in &self.flow {
-            if recipient == player {
-                sender_id = sender;
-                found = true;
-                break;
+            tracing::debug!("{}, {}", sender, recipient);
+            if *recipient == *player {
+                return Ok(*sender);
             }
         }
 
         if self.first_player == *player {
-            found = true;
+            return Ok(Uuid::nil());
         }
 
-        if !found {
-            return Err(AppError::BadRequest("not found".to_string()));
-        }
-
-        return Ok(*sender_id);
+        return Err(AppError::BadRequest("not found".to_string()));
     }
 }
 
