@@ -42,6 +42,14 @@ pub struct QuickConnect {
     pub connect_code: String,
 }
 
+#[derive(Deserialize, Serialize)]
+pub struct QuickConnectTempUserData {
+    pub lobby: Lobby,
+    pub user: User,
+    pub token: String,
+    pub password: String
+}
+
 pub async fn create_user(
     tx: &mut Transaction<'_, Postgres>,
     user_data: CreateUser,
@@ -314,7 +322,7 @@ pub async fn quick_connect(
     tx: &mut Transaction<'_, Postgres>,
     connect_code: &String,
     state: Arc<State>,
-    user: User,
+    user: &User,
 ) -> Result<Uuid, AppError> {
     let lobby = sqlx::query_as!(Lobby,
         // language=PostgreSQL

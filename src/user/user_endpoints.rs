@@ -9,7 +9,7 @@ use tracing::{event, Level};
 use uuid::Uuid;
 
 use crate::{
-    auth::{Auth, AuthAdmin},
+    auth::{Auth, AuthAdmin, authorize, AuthPayload},
     entities::{Lobby, User, UserRole},
     error::AppError,
     lobby::lobby::get_lobby_transaction,
@@ -17,10 +17,10 @@ use crate::{
         connect_user, create_user, disconnect_user, generate_password, generate_username,
         lock_lobby_tables, lock_user_tables, quick_connect, update_user_password,
     },
-    State,
+    State
 };
 
-use super::user::{get_user, ConnectUser, CreateUser, QuickConnect, UpdateUser};
+use super::user::{get_user, ConnectUser, CreateUser, QuickConnect, UpdateUser, QuickConnectTempUserData};
 
 pub async fn create_user_endpoint(
     Extension(ref db): Extension<PgPool>,
@@ -230,7 +230,7 @@ pub async fn quick_connect_endpoint(
 
     let user = get_user(auth.user_id, &mut tx).await?;
 
-    let lobby_id = quick_connect(&mut tx, &params.connect_code, state, user).await?;
+    let lobby_id = quick_connect(&mut tx, &params.connect_code, state, &user).await?;
 
     let lobby = get_lobby_transaction(lobby_id, &mut tx).await?;
 
@@ -251,7 +251,7 @@ pub async fn quick_connect_endpoint_no_user(
     Extension(ref db): Extension<PgPool>,
     params: Query<QuickConnect>,
     Extension(state): Extension<Arc<State>>,
-) -> Result<Json<Lobby>, AppError> {
+) -> Result<Json<QuickConnectTempUserData>, AppError> {
     let mut tx = db
         .begin()
         .await
@@ -291,20 +291,22 @@ pub async fn quick_connect_endpoint_no_user(
 
     event!(Level::DEBUG, "Tables locked");
 
+    let mut password = generate_password(); 
     let mut user = CreateUser {
         username: generate_username(),
-        password: generate_password(),
+        password: password.clone(),
         role: UserRole::Temp,
     };
 
     event!(Level::TRACE, "Creating temp user");
 
     let mut creation_result = create_user(&mut tx, user).await;
-
+    
     while let Err(AppError::AlreadyExists(_)) = creation_result {
+        password = generate_password();
         user = CreateUser {
             username: generate_username(),
-            password: generate_password(),
+            password: password.clone(),
             role: UserRole::Temp,
         };
 
@@ -319,8 +321,10 @@ pub async fn quick_connect_endpoint_no_user(
         temp_usr.id,
         temp_usr.username
     );
+    
+    let token = authorize(AuthPayload{ username: temp_usr.username.clone(), password: temp_usr.password.clone() }, db).await?;
 
-    let lobby_id = quick_connect(&mut tx, &params.connect_code, state, temp_usr).await?;
+    let lobby_id = quick_connect(&mut tx, &params.connect_code, state, &temp_usr).await?;
 
     let lobby = get_lobby_transaction(lobby_id, &mut tx).await?;
 
@@ -328,5 +332,5 @@ pub async fn quick_connect_endpoint_no_user(
         .await
         .map_err(|e| AppError::DbErr(e.to_string()))?;
 
-    Ok(Json(lobby))
+    Ok(Json(QuickConnectTempUserData{ lobby, user: temp_usr, token: token, password }))
 }

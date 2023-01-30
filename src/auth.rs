@@ -109,6 +109,12 @@ pub async fn authorize_endpoint(
     Extension(ref db): Extension<PgPool>,
     Json(payload): Json<AuthPayload>,
 ) -> Result<Json<AuthBody>, AppError> {
+    let token = authorize(payload, db).await?;
+
+    Ok(Json(AuthBody::new(token)))
+}
+
+pub async fn authorize(payload: AuthPayload, db: &PgPool) -> Result<String, AppError> {
     if payload.username.is_empty() || payload.password.is_empty() {
         return Err(AppError::MissingCredentials);
     }
@@ -141,7 +147,7 @@ pub async fn authorize_endpoint(
     let token =
         encode(&Header::default(), &claims, &KEYS.encoding).map_err(|_| AppError::TokenCreation)?;
 
-    Ok(Json(AuthBody::new(token)))
+    Ok(token)
 }
 
 #[async_trait]

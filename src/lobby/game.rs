@@ -438,6 +438,7 @@ fn evaluate_round_cond(round_state: &mut RoundState, round: i64) -> (bool, Vec<U
     tracing::debug!("assesing round cond, {}, {}", round_state.round, round);
     let mut players_id = Vec::new();
     if round_state.round == round {
+        tracing::debug!("round event evaluation");
         for (u_id, _) in &round_state.users_states {
             players_id.push(*u_id);
         }
